@@ -1,0 +1,36 @@
+<?xml version="1.0" ?>
+<sdf version="1.7">
+    <model name="ball">
+        <pose>8.0 4.0 0.1 0 0 0</pose>
+        <static>false</static>
+        <link name="ball_link">
+            <inertial>
+                <mass>0.2</mass>
+                <inertia>
+                    <ixx>0.001</ixx>
+                    <iyy>0.001</iyy>
+                    <izz>0.001</izz>
+                </inertia>
+            </inertial>
+            <visual name="ball_visual">
+                <geometry>
+                    <sphere>
+                        <radius>0.15</radius>
+                    </sphere>
+                </geometry>
+                <material>
+                    <ambient>1.0 0.0 0.0 1</ambient>
+                    <diffuse>1.0 0.0 0.0 1</diffuse>
+                    <specular>1.0 1.0 1.0 1</specular>
+                </material>
+            </visual>
+            <collision name="ball_collision">
+                <geometry>
+                    <sphere>
+                        <radius>0.15</radius>
+                    </sphere>
+                </geometry>
+            </collision>
+        </link>
+    </model>
+</sdf>

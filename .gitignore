@@ -30,3 +30,14 @@
 *.exe
 *.out
 *.app
+
+# ROS2 & Gazebo build artifacts
+build/
+install/
+log/
+.colcon/
+CMakeCache.txt
+CMakeFiles/
+.colcon_workspace/
+*.pyc
+__pycache__/
