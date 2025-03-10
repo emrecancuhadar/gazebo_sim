@@ -5,11 +5,15 @@ import sys
 import subprocess
 import time
 import random
+import os
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from geometry_msgs.msg import Pose, PoseArray
 
-# ✅ Update this with your actual model file path
-BALL_MODEL_PATH = "/home/emrecan/two_wheel_ws/src/two_wheel_robot/ros_gz_example_description/models/ball/model.sdf"
+BALL_MODEL_PATH = os.path.join(
+    get_package_share_directory('ros_gz_example_description'),
+    'models', 'ball', 'model.sdf'
+)
 
 class BallSpawner(Node):
     def __init__(self, num_balls, ball_positions):

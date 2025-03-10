@@ -5,9 +5,11 @@ find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
 
 install(
-    DIRECTORY src/
-    DESTINATION lib/${PROJECT_NAME}
-    USE_SOURCE_PERMISSIONS
+  PROGRAMS
+    scripts/ball_spawner.py
+    scripts/go_to_goal.py
+    scripts/path_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_package()
