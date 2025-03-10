@@ -47,13 +47,15 @@ class BallSpawner(Node):
             self.get_logger().info(f"Spawning ball {i+1}/{num_balls}: {ball_name} at ({x}, {y}, {z})")
 
             spawn_command = [
-                "ros2", "launch", "ros_gz_sim", "gz_spawn_model.launch.py",
-                f"file:={BALL_MODEL_PATH}",
-                f"entity_name:={ball_name}",
-                f"x:={x}",
-                f"y:={y}",
-                f"z:={z}"
+                "ros2", "run", "ros_gz_sim", "create",
+                "-demo", "default",                      # world name (use -world if required)
+                "-file", BALL_MODEL_PATH,                # path to the model file
+                "-x", str(x),                           # X position (meters)
+                "-y", str(y),                           # Y position (meters)
+                "-z", str(z),                           # Z position (meters)
+                "-name", ball_name                      # entity name
             ]
+
 
             try:
                 subprocess.run(spawn_command, check=True)
