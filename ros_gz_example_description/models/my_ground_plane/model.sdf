@@ -1,0 +1,44 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <model name="my_ground_plane">
+    <static>true</static>
+    <link name="link">
+      <!-- COLLISION: define a plane for physics -->
+      <collision name="collision">
+        <geometry>
+          <plane>
+            <normal>0 0 1</normal>
+            <size>100 100</size>
+          </plane>
+        </geometry>
+      </collision>
+
+      <!-- VISUAL: define the same plane for rendering -->
+      <visual name="visual">
+        <geometry>
+          <plane>
+            <normal>0 0 1</normal>
+            <size>50 50</size>
+          </plane>
+        </geometry>
+        <material>
+          <!-- Simple color fallback -->
+          <diffuse>1 1 1 1</diffuse>
+          <specular>1 1 1 1</specular>
+
+          <!-- PBR block, referencing your texture -->
+          <pbr>
+            <metal>
+              <albedo_map>materials/textures/iyte.png</albedo_map>
+              <!-- 
+              Optionally, you can define:
+              <normal_map>materials/textures/my_ground_normal.png</normal_map>
+              <roughness_map>materials/textures/my_ground_roughness.png</roughness_map>
+              -->
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
