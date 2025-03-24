@@ -36,11 +36,11 @@ class BallSpawner(Node):
             # Use given positions if provided, else generate random ones
             if i < len(ball_positions):
                 x, y = ball_positions[i]  # Take only (x, y)
-                z = 0.3  # Default z-value
+                z = 0.005  # Default z-value
             else:
                 x = random.uniform(-5.0, 5.0)
                 y = random.uniform(-5.0, 5.0)
-                z = 0.3  # Fixed height for spawning
+                z = 0.005  # Fixed height for spawning
 
             ball_name = f"ball_{i}"
 

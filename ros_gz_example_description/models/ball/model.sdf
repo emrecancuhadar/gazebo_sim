@@ -1,36 +1,25 @@
 <?xml version="1.0" ?>
 <sdf version="1.7">
-    <model name="ball">
-        <pose>8.0 4.0 0.1 0 0 0</pose>
-        <static>false</static>
-        <link name="ball_link">
-            <inertial>
-                <mass>0.2</mass>
-                <inertia>
-                    <ixx>0.001</ixx>
-                    <iyy>0.001</iyy>
-                    <izz>0.001</izz>
-                </inertia>
-            </inertial>
-            <visual name="ball_visual">
-                <geometry>
-                    <sphere>
-                        <radius>0.15</radius>
-                    </sphere>
-                </geometry>
-                <material>
-                    <ambient>1.0 0.0 0.0 1</ambient>
-                    <diffuse>1.0 0.0 0.0 1</diffuse>
-                    <specular>1.0 1.0 1.0 1</specular>
-                </material>
-            </visual>
-            <collision name="ball_collision">
-                <geometry>
-                    <sphere>
-                        <radius>0.15</radius>
-                    </sphere>
-                </geometry>
-            </collision>
-        </link>
-    </model>
+  <model name="ball">
+    <!-- The pose is set so that a cylinder of length 0.001 is just buried in the ground -->
+    <pose>0.0 0.0 -0.0005 0 0 0</pose>
+    <static>true</static>
+    <link name="ball_link">
+      <visual name="ball_visual">
+        <geometry>
+          <cylinder>
+            <radius>0.2</radius>
+            <length>0.001</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <!-- Using an orange color -->
+          <ambient>1.0 0.5 0.0 1</ambient>
+          <diffuse>1.0 0.5 0.0 1</diffuse>
+          <specular>1.0 1.0 1.0 1</specular>
+        </material>
+      </visual>
+      <!-- In this 2D-only drawing, we omit any collision element -->
+    </link>
+  </model>
 </sdf>
