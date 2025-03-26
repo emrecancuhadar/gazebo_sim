@@ -1,11 +1,13 @@
 <?xml version="1.0" ?>
 <sdf version="1.7">
-  <model name="ball">
-    <!-- The pose is set so that a cylinder of length 0.001 is just buried in the ground -->
-    <pose>0.0 0.0 -0.0005 0 0 0</pose>
+  <model name="forest_1_ball_state_0">
+    <pose>0 0 0.01 0 0 0</pose>
     <static>true</static>
-    <link name="ball_link">
-      <visual name="ball_visual">
+    
+    <!-- Top-left ball -->
+    <link name="tree_1">
+      <pose>0.5 1.5 -0.0005 0 0 0</pose>
+      <visual name="tree_1_visual">
         <geometry>
           <cylinder>
             <radius>0.2</radius>
@@ -13,13 +15,11 @@
           </cylinder>
         </geometry>
         <material>
-          <!-- Using an orange color -->
           <ambient>0.0 0.5 0.0 1</ambient>
           <diffuse>0.0 0.5 0.0 1</diffuse>
-          <specular>1.0 1.0 1.0 1</specular>
         </material>
       </visual>
-      <!-- In this 2D-only drawing, we omit any collision element -->
     </link>
+    
   </model>
 </sdf>

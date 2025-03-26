@@ -9,7 +9,11 @@ install(
     scripts/ball_spawner.py
     scripts/go_to_goal.py
     scripts/path_publisher.py
+    scripts/initForest.py
+    scripts/handleFire.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
+
 
 ament_package()

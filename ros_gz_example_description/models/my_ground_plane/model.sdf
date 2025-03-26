@@ -29,7 +29,7 @@
           <!-- PBR block, referencing your texture -->
           <pbr>
             <metal>
-              <albedo_map>materials/textures/deneme.png</albedo_map>
+              <albedo_map>materials/textures/forest.png</albedo_map>
               <!-- 
               Optionally, you can define:
               <normal_map>materials/textures/my_ground_normal.png</normal_map>
