@@ -1,76 +1,87 @@
 #!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
-import subprocess
-import json
-import time
-import os
-from ament_index_python.packages import get_package_share_directory
 from std_msgs.msg import String
+import json, subprocess, time, os
+from ament_index_python.packages import get_package_share_directory
 
 class InitForest(Node):
     def __init__(self):
         super().__init__('init_forest')
 
-        # Grid + plane info (20×20 m with 2×2 m cells)
         self.grid_rows = 10
         self.grid_cols = 10
         self.cell_size = 2.0
-        self.offset = -10.0
+        # Center the 10×10 grid at (0,0)
+        self.offset_x = -((self.grid_cols - 1) * self.cell_size) / 2.0
+        self.offset_y = -((self.grid_rows - 1) * self.cell_size) / 2.0
 
-        # Path to greenIntensity.py (adjust if needed)
         self.intensity_script = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
+        self.share_dir = get_package_share_directory('ros_gz_example_description')
 
-        # Get the share directory for the description package (where the models are installed)
-        share_dir = get_package_share_directory('ros_gz_example_description')
-        # Build paths to the healthy (state 0) forest model SDF files:
-        self.sdf_forest_1 = os.path.join(share_dir, "models", "forest_1_ball/forest_1_ball_state_0", "model.sdf")
-        self.sdf_forest_2 = os.path.join(share_dir, "models", "forest_2_ball/forest_2_ball_state_0", "model.sdf")
-        self.sdf_forest_3 = os.path.join(share_dir, "models", "forest_3_ball/forest_3_ball_state_0", "model.sdf")
-        self.sdf_forest_4 = os.path.join(share_dir, "models", "forest_4_ball/forest_4_ball_state_0", "model.sdf")
-        self.sdf_forest_5 = os.path.join(share_dir, "models", "forest_5_ball/forest_5_ball_state_0", "model.sdf")
-
-        # Dictionary to hold all forest cell info.
+        # Dictionary: key=(row,col) -> { row, col, max_fire, state, cstate, model_name, spawned }
         self.forest_info = {}
-
-        # Publisher to broadcast forest information as a JSON array.
         self.forest_info_pub = self.create_publisher(String, 'forest_info', 10)
 
-        self.get_logger().info("Starting forest initialization node...")
+        self.get_logger().info("InitForest: Starting forest initialization...")
 
-        # Call greenIntensity.py to get the 10×10 intensity values.
+        # 1) Get intensities from greenIntensity.py
         intensities = self.call_green_intensity_script()
         if intensities is None:
-            self.get_logger().error("No intensities received; aborting.")
+            self.get_logger().error("InitForest: No intensities, aborting.")
             return
 
-        # Spawn models and populate forest_info.
+        # 2) For each cell, determine the forest type (max_fire) from intensity.
+        #    We'll store max_fire in forest_info, but not necessarily spawn anything yet.
         for i in range(self.grid_rows):
             for j in range(self.grid_cols):
-                intensity = intensities[i][j]
-                num_balls = self.get_num_balls(intensity)
-                if num_balls == 0:
-                    continue
-
-                if num_balls == 1:
-                    sdf_path = self.sdf_forest_1
-                elif num_balls == 2:
-                    sdf_path = self.sdf_forest_2
-                elif num_balls == 3:
-                    sdf_path = self.sdf_forest_3
-                elif num_balls == 4:
-                    sdf_path = self.sdf_forest_4
+                val = intensities[i][j]
+                if val > 1.7:
+                    mfire = 5
+                elif val > 1.4:
+                    mfire = 4
+                elif val > 1.1:
+                    mfire = 3
+                elif val > 0.8:
+                    mfire = 2
                 else:
-                    sdf_path = self.sdf_forest_5
+                    mfire = 1
+                self.forest_info[(i, j)] = {
+                    "row": i,
+                    "col": j,
+                    "max_fire": mfire,
+                    "state": 0,         # 0=healthy, 1–5=burning
+                    "cstate": 0,        # continuous state
+                    "model_name": None, # not spawned yet
+                    "spawned": False    # whether we've actually spawned a visual
+                }
 
-                self.spawn_one_model(i, j, intensity, num_balls, sdf_path)
+        # 3) Hard-coded pseudo ball detector: only cell (5,5)=3, others=0
+        pseudo_detector = [[0]*self.grid_cols for _ in range(self.grid_rows)]
+        pseudo_detector[9][0] = 3
 
-        # Publish forest info only once, after initialization.
+        # 4) For each cell with a nonzero ball value, spawn a 3×3 cluster
+        #    The center is burning, the others are healthy.
+        for i in range(self.grid_rows):
+            for j in range(self.grid_cols):
+                if pseudo_detector[i][j] > 0:
+                    # Center cell is (i,j), so spawn a cluster around it
+                    for di in [-1,0,1]:
+                        for dj in [-1,0,1]:
+                            rr = i + di
+                            cc = j + dj
+                            if 0 <= rr < self.grid_rows and 0 <= cc < self.grid_cols:
+                                if rr == i and cc == j:
+                                    # burning center
+                                    ball_val = pseudo_detector[i][j] # e.g. 3
+                                    cstate = (ball_val - 1)*200 + 1   # e.g. 401
+                                    self.spawn_cell(rr, cc, state=ball_val, cstate=cstate)
+                                else:
+                                    # healthy
+                                    self.spawn_cell(rr, cc, state=0, cstate=0)
+
         self.publish_forest_info()
-
-        self.get_logger().info("Forest initialization complete.")
-        self.get_logger().info(f"Spawned forest info: {self.forest_info}")
+        self.get_logger().info("InitForest: Initialization complete.")
 
     def call_green_intensity_script(self):
         try:
@@ -78,72 +89,69 @@ class InitForest(Node):
                 ["python3", self.intensity_script],
                 capture_output=True, text=True, check=True, timeout=30
             )
-            self.get_logger().info(f"greenIntensity.py output: {result.stdout}")
             intensities = json.loads(result.stdout)
+            self.get_logger().info(f"InitForest: greenIntensity output:\n{result.stdout}")
             return intensities
         except Exception as e:
-            self.get_logger().error(f"Error running {self.intensity_script}: {str(e)}")
+            self.get_logger().error(f"InitForest: Error running greenIntensity: {e}")
             return None
 
-    def get_num_balls(self, intensity):
-        if intensity > 1.7:
-            return 5
-        elif intensity > 1.4:
-            return 4
-        elif intensity > 1.1:
-            return 3
-        elif intensity > 0.8:
-            return 2
-        elif intensity > 0.5:
-            return 1
-        else:
-            return 0
+    def spawn_cell(self, row, col, state, cstate):
+        # Only spawn if not yet spawned
+        info = self.forest_info.get((row,col), None)
+        if info is None:
+            self.get_logger().warn(f"InitForest: Missing forest_info for cell ({row},{col})")
+            return
+        if info["spawned"]:
+            # Already spawned?
+            return
 
-    def spawn_one_model(self, row, col, intensity, num_balls, sdf_path):
-        cell_origin_x = self.offset + col * self.cell_size
-        cell_origin_y = self.offset + (self.grid_rows - 1 - row) * self.cell_size
-        x, y, z = cell_origin_x, cell_origin_y, 0.01
-        model_name = f"forest_cell{row}_{col}_{int(time.time()*1000)}"
-        self.get_logger().info(
-            f"Spawning {model_name} from {os.path.basename(sdf_path)} at cell ({row},{col}), intensity {intensity:.2f}"
+        max_fire = info["max_fire"]
+        # SDF path: models/forest_<max_fire>_ball/forest_<max_fire>_ball_state_<state>/model.sdf
+        sdf_path = os.path.join(
+            self.share_dir,
+            "models",
+            f"forest_{max_fire}_ball",
+            f"forest_{max_fire}_ball_state_{state}",
+            "model.sdf"
         )
+        x = self.offset_x + col*self.cell_size
+        y = self.offset_y + (self.grid_rows-1 - row)*self.cell_size
+        z = 0.01
+        model_name = f"forest_cell{row}_{col}_{int(time.time()*1000)}"
 
-        spawn_command = [
+        spawn_cmd = [
             "ros2", "run", "ros_gz_sim", "create",
             "-demo", "default",
             "-file", sdf_path,
-            "-x", str(x),
-            "-y", str(y),
-            "-z", str(z),
+            "-x", str(x), "-y", str(y), "-z", str(z),
             "-name", model_name
         ]
-
         try:
-            subprocess.run(spawn_command, check=True)
-            self.get_logger().info(f"Spawned {model_name}")
-            cell_info = {
-                "row": row,
-                "col": col,
-                "model_name": model_name,
-                "num_balls": num_balls,
-                "state": 0
-            }
-            self.forest_info[(row, col)] = cell_info
-            time.sleep(0.5)
+            subprocess.run(spawn_cmd, check=True)
+            self.get_logger().info(f"InitForest: Spawned {model_name} = type={max_fire}, state={state}")
+            info["state"] = state
+            info["cstate"] = cstate
+            info["model_name"] = model_name
+            info["spawned"] = True
+            self.forest_info[(row,col)] = info
+            time.sleep(0.3)
         except subprocess.CalledProcessError as e:
-            self.get_logger().error(f"Failed to spawn {model_name}: {str(e)}")
+            self.get_logger().error(f"InitForest: spawn_cell error for {model_name}: {e}")
 
     def publish_forest_info(self):
-        info_array = list(self.forest_info.values())
+        arr = list(self.forest_info.values())
         msg = String()
-        msg.data = json.dumps(info_array)
+        msg.data = json.dumps(arr)
         self.forest_info_pub.publish(msg)
-        self.get_logger().info(f"Published forest info: {msg.data}")
+        self.get_logger().info("InitForest: Published forest info.")
+
 
 def main(args=None):
     rclpy.init(args=args)
     node = InitForest()
-    rclpy.spin(node)
+    # Spin briefly so it can publish forest_info once
+    rclpy.spin_once(node, timeout_sec=2)
     rclpy.shutdown()
 
 if __name__ == '__main__':

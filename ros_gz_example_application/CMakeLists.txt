@@ -11,6 +11,7 @@ install(
     scripts/path_publisher.py
     scripts/initForest.py
     scripts/handleFire.py
+    scripts/spreadFire.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -1,25 +1,28 @@
 <?xml version="1.0" ?>
-<sdf version="1.7">
+<sdf version="1.6">
   <model name="forest_1_ball_state_2">
-    <pose>0 0 0.01 0 0 0</pose>
     <static>true</static>
-    
-    <!-- Top-left ball -->
-    <link name="tree_1">
-      <pose>0.5 1.5 -0.0005 0 0 0</pose>
-      <visual name="tree_1_visual">
+    <pose>0 0 0 0 0 0</pose>
+    <link name="cell_plane_link">
+      <visual name="cell_plane_visual">
+        <pose>0 0 0 0 0 0</pose>
         <geometry>
-          <cylinder>
-            <radius>0.2</radius>
-            <length>0.001</length>
-          </cylinder>
+          <plane>
+            <size>2 2 0.01</size>
+          </plane>
         </geometry>
         <material>
-          <ambient>0.8 0.8 0.0 1</ambient>
-          <diffuse>0.8 0.8 0.0 1</diffuse>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+
+          <pbr>
+            <metal>
+              <albedo_map>forest_1_ball_state_2.jpg</albedo_map>
+            </metal>
+          </pbr>
+
         </material>
       </visual>
     </link>
-    
   </model>
 </sdf>

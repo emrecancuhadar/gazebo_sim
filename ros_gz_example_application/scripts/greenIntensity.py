@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-
 import cv2
 import numpy as np
 import json
 
 def main():
-    # Update this path to the actual forest image
+    # Update this path to your actual forest image.
     img_path = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/forest.png'
     img = cv2.imread(img_path)
     if img is None:
@@ -35,14 +34,9 @@ def main():
             dark_percentage = (dark_count / total_pixels) * 100
             dark_percentages[i, j] = dark_percentage
 
-    # Map [0..100]% to [0.5..2.0] intensities: intensity = 0.015*percentage + 0.5
+    # Map [0..100]% to intensities (not used further in this pseudo setup)
     intensities = 0.015 * dark_percentages + 0.5
-
-    # Convert the NumPy array to a Python list
-    intensities_list = intensities.tolist()
-
-    # Output as JSON to stdout
-    print(json.dumps(intensities_list))
+    print(json.dumps(intensities.tolist()))
 
 if __name__ == '__main__':
     main()
