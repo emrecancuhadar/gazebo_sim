@@ -58,7 +58,8 @@ class InitForest(Node):
 
         # 3) Hard-coded pseudo ball detector: only cell (5,5)=3, others=0
         pseudo_detector = [[0]*self.grid_cols for _ in range(self.grid_rows)]
-        pseudo_detector[9][0] = 3
+        pseudo_detector[2][2] = 3
+        pseudo_detector[2][5] = 2
 
         # 4) For each cell with a nonzero ball value, spawn a 3×3 cluster
         #    The center is burning, the others are healthy.

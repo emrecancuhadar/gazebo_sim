@@ -12,9 +12,15 @@ install(
     scripts/initForest.py
     scripts/handleFire.py
     scripts/spreadFire.py
+    scripts/gazebo_service_tester.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-
+# Install launch files
+install(
+  DIRECTORY
+    launch
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_package()
