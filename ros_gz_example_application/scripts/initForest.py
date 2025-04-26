@@ -2,158 +2,171 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
-import json, subprocess, time, os
+import json, time, os, subprocess
+from subprocess import CalledProcessError, TimeoutExpired
 from ament_index_python.packages import get_package_share_directory
 
 class InitForest(Node):
     def __init__(self):
         super().__init__('init_forest')
-
+        # Grid params
         self.grid_rows = 10
         self.grid_cols = 10
         self.cell_size = 2.0
-        # Center the 10×10 grid at (0,0)
-        self.offset_x = -((self.grid_cols - 1) * self.cell_size) / 2.0
-        self.offset_y = -((self.grid_rows - 1) * self.cell_size) / 2.0
+        self.offset_x = -((self.grid_cols - 1)*self.cell_size)/2.0
+        self.offset_y = -((self.grid_rows - 1)*self.cell_size)/2.0
 
+        # Script paths
         self.intensity_script = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
-        self.share_dir = get_package_share_directory('ros_gz_example_description')
+        self.season_script    = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
+        self.share_dir        = get_package_share_directory('ros_gz_example_description')
 
-        # Dictionary: key=(row,col) -> { row, col, max_fire, state, cstate, model_name, spawned }
+        # Data paths
+        self.summer_red = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_red.tiff'
+        self.summer_nir = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_nir.tiff'
+        self.winter_red = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_red.tiff'
+        self.winter_nir = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_nir.tiff'
+        self.winter_img = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/14ocak2024normalview.jpg'
+
+        # Publisher
         self.forest_info = {}
-        self.forest_info_pub = self.create_publisher(String, 'forest_info', 10)
-
+        self.pub = self.create_publisher(String, 'forest_info', 10)
         self.get_logger().info("InitForest: Starting forest initialization...")
 
-        # 1) Get intensities from greenIntensity.py
-        intensities = self.call_green_intensity_script()
-        if intensities is None:
-            self.get_logger().error("InitForest: No intensities, aborting.")
+        # 1) Run greenIntensity
+        intens = self.call_green_intensity_script()
+        # 2) Run fourseasons
+        labels = self.call_season_script()
+        if intens is None or labels is None:
+            self.get_logger().error("InitForest: failed to compute grids")
             return
 
-        # 2) For each cell, determine the forest type (max_fire) from intensity.
-        #    We'll store max_fire in forest_info, but not necessarily spawn anything yet.
+        # 3) Initialize forest_info
+        label_map = {1:'Bare Soil',2:'Deciduous',3:'Coniferous',4:'Sparse Veg'}
         for i in range(self.grid_rows):
             for j in range(self.grid_cols):
-                val = intensities[i][j]
-                if val > 1.7:
-                    mfire = 5
-                elif val > 1.4:
-                    mfire = 4
-                elif val > 1.1:
-                    mfire = 3
-                elif val > 0.8:
-                    mfire = 2
-                else:
-                    mfire = 1
-                self.forest_info[(i, j)] = {
-                    "row": i,
-                    "col": j,
-                    "max_fire": mfire,
-                    "state": 0,         # 0=healthy, 1–5=burning
-                    "cstate": 0,        # continuous state
-                    "model_name": None, # not spawned yet
-                    "spawned": False    # whether we've actually spawned a visual
+                v = intens[i][j]
+                if   v>1.7: m=5
+                elif v>1.4: m=4
+                elif v>1.1: m=3
+                elif v>0.8: m=2
+                else:      m=1
+                code = int(labels[i][j])
+                self.forest_info[(i,j)] = {
+                    'row':i,'col':j,
+                    'max_fire':m,'state':0,'cstate':0,
+                    'model_name':None,'spawned':False,
+                    'label':label_map.get(code,'Unclassified')
                 }
 
-        # 3) Hard-coded pseudo ball detector: only cell (5,5)=3, others=0
-        pseudo_detector = [[0]*self.grid_cols for _ in range(self.grid_rows)]
-        pseudo_detector[2][2] = 3
-        pseudo_detector[2][5] = 2
+               # 4) DATA‐DRIVEN SPAWNS
+        # ----------------------------------
+        # Define your “center” fires
+        centers = [
+            (0, 0, 3),   # (row, col, fire_strength)
+            (0, 1, 2),
+            (1, 0, 3),
+            (3, 3, 1)
+        ]
 
-        # 4) For each cell with a nonzero ball value, spawn a 3×3 cluster
-        #    The center is burning, the others are healthy.
-        for i in range(self.grid_rows):
-            for j in range(self.grid_cols):
-                if pseudo_detector[i][j] > 0:
-                    # Center cell is (i,j), so spawn a cluster around it
-                    for di in [-1,0,1]:
-                        for dj in [-1,0,1]:
-                            rr = i + di
-                            cc = j + dj
-                            if 0 <= rr < self.grid_rows and 0 <= cc < self.grid_cols:
-                                if rr == i and cc == j:
-                                    # burning center
-                                    ball_val = pseudo_detector[i][j] # e.g. 3
-                                    cstate = (ball_val - 1)*200 + 1   # e.g. 401
-                                    self.spawn_cell(rr, cc, state=ball_val, cstate=cstate)
-                                else:
-                                    # healthy
-                                    self.spawn_cell(rr, cc, state=0, cstate=0)
+        # Build a map from (row,col) -> (state, cstate)
+        spawn_map = {}
+        # Phase 1: schedule the centers
+        for i, j, fv in centers:
+            cs = (fv - 1) * 200 + 1
+            spawn_map[(i, j)] = (fv, cs)
 
+        # Phase 2: schedule *only* healthy neighbours
+        for i, j, _ in centers:
+            for di in (-1, 0, 1):
+                for dj in (-1, 0, 1):
+                    ni, nj = i + di, j + dj
+                    if (ni, nj) == (i, j):
+                        continue
+                    if not (0 <= ni < self.grid_rows and 0 <= nj < self.grid_cols):
+                        continue
+
+                    nbr = self.forest_info[(ni, nj)]
+                    # only schedule if truly healthy
+                    if nbr['cstate'] == 0:
+                        # state=0, cstate=0 for a “cold” neighbour
+                        spawn_map.setdefault((ni, nj), (0, 0))
+
+        # Now do *one* pass over spawn_map and actually spawn each cell
+        for (row, col), (st, cs) in spawn_map.items():
+            self.spawn_cell(row, col, st, cs)
+
+        # 5) Publish once
         self.publish_forest_info()
         self.get_logger().info("InitForest: Initialization complete.")
 
     def call_green_intensity_script(self):
         try:
-            result = subprocess.run(
-                ["python3", self.intensity_script],
+            res = subprocess.run(
+                ["python3", self.intensity_script, self.winter_img],
                 capture_output=True, text=True, check=True, timeout=30
             )
-            intensities = json.loads(result.stdout)
-            self.get_logger().info(f"InitForest: greenIntensity output:\n{result.stdout}")
-            return intensities
+            arr = json.loads(res.stdout)
+            self.get_logger().info(f"InitForest: greenIntensity output:\n{res.stdout}")
+            return arr
         except Exception as e:
             self.get_logger().error(f"InitForest: Error running greenIntensity: {e}")
             return None
 
-    def spawn_cell(self, row, col, state, cstate):
-        # Only spawn if not yet spawned
-        info = self.forest_info.get((row,col), None)
-        if info is None:
-            self.get_logger().warn(f"InitForest: Missing forest_info for cell ({row},{col})")
-            return
-        if info["spawned"]:
-            # Already spawned?
-            return
-
-        max_fire = info["max_fire"]
-        # SDF path: models/forest_<max_fire>_ball/forest_<max_fire>_ball_state_<state>/model.sdf
-        sdf_path = os.path.join(
-            self.share_dir,
-            "models",
-            f"forest_{max_fire}_ball",
-            f"forest_{max_fire}_ball_state_{state}",
-            "model.sdf"
-        )
-        x = self.offset_x + col*self.cell_size
-        y = self.offset_y + (self.grid_rows-1 - row)*self.cell_size
-        z = 0.01
-        model_name = f"forest_cell{row}_{col}_{int(time.time()*1000)}"
-
-        spawn_cmd = [
-            "ros2", "run", "ros_gz_sim", "create",
-            "-demo", "default",
-            "-file", sdf_path,
-            "-x", str(x), "-y", str(y), "-z", str(z),
-            "-name", model_name
-        ]
+    def call_season_script(self):
         try:
-            subprocess.run(spawn_cmd, check=True)
-            self.get_logger().info(f"InitForest: Spawned {model_name} = type={max_fire}, state={state}")
-            info["state"] = state
-            info["cstate"] = cstate
-            info["model_name"] = model_name
-            info["spawned"] = True
-            self.forest_info[(row,col)] = info
+            res = subprocess.run(
+                ["python3", self.season_script,
+                 self.summer_red, self.summer_nir,
+                 self.winter_red, self.winter_nir],
+                capture_output=True, text=True, check=True, timeout=60
+            )
+            arr = json.loads(res.stdout)
+            self.get_logger().info(f"InitForest: fourseasons output:\n{res.stdout}")
+            return arr
+        except Exception as e:
+            self.get_logger().error(f"InitForest: Error running fourseasons: {e}")
+            return None
+
+    def spawn_cell(self, row, col, state, cstate):
+        info=self.forest_info[(row,col)]
+        if info['spawned']: return
+        mf=info['max_fire']
+        sdf=os.path.join(self.share_dir,'models',f'forest_{mf}_ball',f'forest_{mf}_ball_state_{state}','model.sdf')
+        x=self.offset_x+col*self.cell_size
+        y=self.offset_y+(self.grid_rows-1-row)*self.cell_size
+        name=f"forest_cell{row}_{col}_{int(time.time()*1000)}"
+        cmd=["ros2","run","ros_gz_sim","create","-demo","default","-file",sdf,
+             "-x",str(x),"-y",str(y),"-z","0.01","-name",name]
+        try:
+            self.run_cmd_with_retry(cmd)
+            info.update(state=state,cstate=cstate,model_name=name,spawned=True)
+            self.forest_info[(row,col)]=info
+            self.get_logger().info(f"Spawned cell {name} at {(row,col)} state {state}")
             time.sleep(0.3)
-        except subprocess.CalledProcessError as e:
-            self.get_logger().error(f"InitForest: spawn_cell error for {model_name}: {e}")
+        except Exception as e:
+            self.get_logger().error(f"Spawn cell {name} failed: {e}")
+
+    def run_cmd_with_retry(self, cmd, timeout=4.0, retries=3):
+        last=None
+        for i in range(1,retries+1):
+            try:
+                return subprocess.run(cmd,stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE,check=True,
+                                      text=True,timeout=timeout)
+            except (TimeoutExpired,CalledProcessError) as e:
+                last=e;self.get_logger().warn(f"[retry {i}/{retries}] {e}");time.sleep(0.5)
+        raise last
 
     def publish_forest_info(self):
-        arr = list(self.forest_info.values())
-        msg = String()
-        msg.data = json.dumps(arr)
-        self.forest_info_pub.publish(msg)
-        self.get_logger().info("InitForest: Published forest info.")
+        arr=list(self.forest_info.values())
+        msg=String();msg.data=json.dumps(arr)
+        self.pub.publish(msg)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = InitForest()
-    # Spin briefly so it can publish forest_info once
-    rclpy.spin_once(node, timeout_sec=2)
-    rclpy.shutdown()
+    n=InitForest();rclpy.spin_once(n,timeout_sec=2);rclpy.shutdown()
 
-if __name__ == '__main__':
+if __name__=='__main__':
     main()

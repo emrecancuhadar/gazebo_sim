@@ -13,6 +13,8 @@ install(
     scripts/handleFire.py
     scripts/spreadFire.py
     scripts/gazebo_service_tester.py
+    scripts/greenIntensity.py
+    scripts/fourseasons.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

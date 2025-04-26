@@ -2,7 +2,7 @@
 <sdf version="1.8">
     <model name='diff_drive'>
       <link name='chassis'>
-        <pose>0 0 0.175 0 -0 0</pose>
+        <pose>0 0 0.01 0 -0 0</pose>
         <inertial>
           <mass>0.14395</mass>
           <inertia>
@@ -17,7 +17,7 @@
         <visual name='visual_chassis'>
           <geometry>
             <box>
-              <size>2.4 1.5 0.268726</size>
+              <size>0.12 0.075 0.0134363</size>
             </box>
           </geometry>
           <material>
@@ -29,14 +29,14 @@
         <collision name='collision_chassis'>
           <geometry>
             <box>
-              <size>2.4 1.5 0.268726</size>
+              <size>0.12 0.075 0.0134363</size>
             </box>
           </geometry>
         </collision>
       </link>
 
       <link name='left_wheel'>
-        <pose>-0.525 0.75 -0.025 -1.5707 0 0</pose>
+        <pose>-0.0525 0.04375 -0.00271815 -1.5707 0 0</pose>
         <inertial>
           <mass>1</mass>
           <inertia>
@@ -51,8 +51,8 @@
         <visual name='visual_left_wheel'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <material>
@@ -64,8 +64,8 @@
         <collision name='collision_left_wheel'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <surface>
@@ -83,7 +83,7 @@
       </link>
 
       <link name='right_wheel'>
-        <pose>-0.525 -0.75 -0.025 -1.5707 0 0</pose>
+        <pose>-0.0525 -0.04375 -0.00271815 -1.5707 0 0</pose>
         <inertial>
           <mass>1</mass>
           <inertia>
@@ -98,8 +98,8 @@
         <visual name='visual_right_wheel'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <material>
@@ -111,8 +111,8 @@
         <collision name='collision_right_wheel'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <surface>
@@ -130,7 +130,7 @@
       </link>
 
       <link name='left_wheel_front'>
-        <pose>0.525 0.75 -0.025 -1.5707 0 0</pose>
+        <pose>0.0525 0.04375 -0.00271815 -1.5707 0 0</pose>
         <inertial>
           <mass>1</mass>
           <inertia>
@@ -145,8 +145,8 @@
         <visual name='visual_left_wheel_front'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <material>
@@ -158,8 +158,8 @@
         <collision name='collision_left_wheel_front'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <surface>
@@ -177,7 +177,7 @@
       </link>
 
       <link name='right_wheel_front'>
-        <pose>0.525 -0.75 -0.025 -1.5707 0 0</pose>
+        <pose>0.0525 -0.04375 -0.00271815 -1.5707 0 0</pose>
         <inertial>
           <mass>1</mass>
           <inertia>
@@ -192,8 +192,8 @@
         <visual name='visual_right_wheel_front'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <material>
@@ -205,8 +205,8 @@
         <collision name='collision_right_wheel_front'>
           <geometry>
             <cylinder>
-              <radius>0.325</radius>
-              <length>0.25</length>
+              <radius>0.01625</radius>
+              <length>0.0125</length>
             </cylinder>
           </geometry>
           <surface>
@@ -218,7 +218,7 @@
                 <slip1>0.1</slip1>
                 <slip2>0.1</slip2>
               </ode>
-            </friction>
+            </friction> 
           </surface>
         </collision>
       </link>
