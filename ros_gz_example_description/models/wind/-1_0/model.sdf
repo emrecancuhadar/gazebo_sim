@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="wind_direction_arrow">
+    <static>true</static>
+    <pose>0 0 0 0 0 0</pose>
+    <link name="cell_plane_link">
+      <visual name="cell_plane_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <plane>
+            <size>4 4 0.01</size>
+          </plane>
+        </geometry>
+        <material>
+          <lighting>false</lighting>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+
+          <pbr>
+            <metal>
+              <albedo_map>wind.jpg</albedo_map>
+            </metal>
+          </pbr>
+
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

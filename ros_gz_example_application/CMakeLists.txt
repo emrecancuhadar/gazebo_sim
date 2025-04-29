@@ -15,6 +15,7 @@ install(
     scripts/gazebo_service_tester.py
     scripts/greenIntensity.py
     scripts/fourseasons.py
+    scripts/fireCellGoal.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
