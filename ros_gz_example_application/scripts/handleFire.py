@@ -5,6 +5,7 @@ from std_msgs.msg import String, Float32MultiArray
 import json, subprocess, time, os
 from subprocess import CalledProcessError, TimeoutExpired
 from ament_index_python.packages import get_package_share_directory
+from nav_msgs.msg import Odometry
 
 class HandleFire(Node):
     def __init__(self):
@@ -25,6 +26,9 @@ class HandleFire(Node):
         self.share_dir = get_package_share_directory('ros_gz_example_description')
         self.forest_info = {}  # will hold per-cell dicts, including 'max_fire', 'cstate', 'state', and now 'detected_balls'
 
+        self.robot_cell = None
+        self.paused_cells = {}  # key → pause_end_time (epoch seconds)
+
         # Counters
         self.spawn_count = 0
         self.delete_count = 0
@@ -34,10 +38,11 @@ class HandleFire(Node):
         #  - forest_info should eventually include a 'detected_balls' field for each cell
         self.create_subscription(String, 'forest_info', self.forest_info_callback, 10)
         self.forest_info_pub = self.create_publisher(String, 'forest_info', 10)
+        self.create_subscription(Odometry, '/diff_drive/odometry', self.odometry_callback, 10)
 
         # Wind (for simple, single-direction spread)
-        self.wind_dx = 0
-        self.wind_dy = 1
+        self.wind_dx = 1
+        self.wind_dy = 0
 
         # We’ll batch spreads every cycle and then apply
         self._pending_spreads = set()
@@ -96,18 +101,70 @@ class HandleFire(Node):
         except Exception as e:
             self.get_logger().error(f"Error parsing forest_info: {e}")
 
+
+    def odometry_callback(self, msg: Odometry):
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+
+        # map to nearest column
+        idx_col = int(round((x - self.offset_x) / self.cell_size))
+        # map to nearest "y‐index" then invert to row
+        idx_y   = int(round((y - self.offset_y) / self.cell_size))
+        row     = self.grid_rows - 1 - idx_y
+        col     = idx_col
+
+        # clamp to [0..9]
+        row = max(0, min(self.grid_rows - 1, row))
+        col = max(0, min(self.grid_cols - 1, col))
+
+        self.get_logger().info(f"Robot at x={x:.2f}, y={y:.2f} → cell ({row}, {col})")
+        time.sleep(1.5)
+        if not (0 <= row < self.grid_rows and 0 <= col < self.grid_cols):
+            return
+
+        key = (row, col)
+        cell = self.forest_info.get(key)
+        if cell and cell.get("cstate", 0) > 0 and cell.get("state", 0) < 6:
+            # compute world‐coords of cell center
+            cx = self.offset_x + key[1] * self.cell_size
+            cy = self.offset_y + (self.grid_rows - 1 - key[0]) * self.cell_size
+            dist = ((x - cx)**2 + (y - cy)**2)**0.5
+            if dist <= 0.10 and key not in self.paused_cells:
+                # record the moment we arrived
+                self.paused_cells[key] = time.time()
+                self.get_logger().info(f"Paused cell {key} at t={self.paused_cells[key]:.1f}")
+
+
     def update_burning_cells(self):
         self._pending_spreads.clear()
+        now = time.time()
 
         for key, cell in list(self.forest_info.items()):
+            # 1) never touch an already‐extinguished cell
+            if cell.get("state", 0) == 6:
+                continue
+
+            # 2) handle robot‐paused cells
+            if key in self.paused_cells:
+                start = self.paused_cells[key]
+                if now < start + 30.0:
+                    # still within 30s window: skip this cell entirely
+                    continue
+                # 30s elapsed → extinguish permanently
+                del self.paused_cells[key]
+                cell["cstate"] = -1
+                self.get_logger().info(f"30 s done for {key}; forcing state 6")
+                self.update_cell(key, force_state=6)
+                continue
+
+
+            # regular burning progression (unchanged)
             c = cell.get("cstate", 0)
             m = cell.get("max_fire", 1)
             c_max = m * 200
-            # only progress burning cells up to 3x max
             if c > 0 and c < c_max * 3:
                 interval = c_max / 5.0
 
-                # new increment values: 3,6,9,12,15
                 if c < c_max:
                     idx = int((c - 1) // interval)
                     inc = (idx + 1) * 3
@@ -118,7 +175,6 @@ class HandleFire(Node):
                 cell["cstate"] = new_c
                 self.get_logger().info(f"Cell {key} cstate -> {new_c}")
 
-                # determine visual state 1-5
                 new_state = min(int((new_c - 1) // interval) + 1, 5)
                 if new_state > cell.get("state", 0):
                     self.update_cell(key, force_state=new_state)
@@ -126,7 +182,7 @@ class HandleFire(Node):
                 if new_c >= c_max:
                     self._pending_spreads.add(key)
 
-        # perform spreads
+        # fire spread (unchanged)
         for src in self._pending_spreads:
             self.spread_fire(src)
 
@@ -138,24 +194,26 @@ class HandleFire(Node):
         cur = cell.get("state", 0)
         new_state = force_state if force_state and force_state > cur else (cur + 1)
 
-        # if fully burnt (cstate >= max_fire*200*3), we leave it at state 5
-        if cell["cstate"] >= cell["max_fire"] * 200 * 3:
+        # if fully burnt and state 5, just hold
+        if cell["cstate"] >= cell["max_fire"] * 200 * 3 and new_state <= 5:
             self.get_logger().info(f"Cell {key} fully burnt, holding at state 5")
             return
 
         # remove old model
         old = cell.get("model_name")
         if old:
-            cmd = ["ros2", "run", "ros_gz_sim", "remove", "--ros-args", "-p", f"entity_name:={old}"]
             try:
-                self.run_cmd_with_retry(cmd)
+                self.run_cmd_with_retry([
+                    "ros2", "run", "ros_gz_sim", "remove",
+                    "--ros-args", "-p", f"entity_name:={old}"
+                ])
                 self.delete_count += 1
                 self.get_logger().info(f"Deleted {old}")
             except Exception as e:
                 self.get_logger().error(f"Delete failed: {e}")
                 return
 
-        # spawn new visual for the new_state
+        # spawn new visual for the new_state (1–6)
         m = cell["max_fire"]
         sdf = os.path.join(
             self.share_dir,
@@ -166,15 +224,13 @@ class HandleFire(Node):
         x = self.offset_x + key[1] * self.cell_size
         y = self.offset_y + (self.grid_rows - 1 - key[0]) * self.cell_size
         name = f"forest_cell{key[0]}_{key[1]}_{int(time.time()*1000)}"
-        cmd = [
-            "ros2", "run", "ros_gz_sim", "create", "-demo", "default",
-            "-file", sdf, "-x", str(x), "-y", str(y), "-z", "0.01", "-name", name
-        ]
         try:
-            self.run_cmd_with_retry(cmd)
+            self.run_cmd_with_retry([
+                "ros2", "run", "ros_gz_sim", "create", "-demo", "default",
+                "-file", sdf, "-x", str(x), "-y", str(y), "-z", "0.01", "-name", name
+            ])
             self.spawn_count += 1
             cell.update(model_name=name, state=new_state)
-            self.forest_info[key] = cell
             self.get_logger().info(f"Spawned {name} state {new_state}")
         except Exception as e:
             self.get_logger().error(f"Spawn failed: {e}")
@@ -284,7 +340,6 @@ class HandleFire(Node):
         self.get_logger().info("Published updated forest_info")
 
     def publish_grid_data(self):
-        # walk row-major over the 10×10 grid
         fire_count = []
         fuel_load  = []
         vegetation = []
@@ -293,28 +348,21 @@ class HandleFire(Node):
             for c in range(self.grid_cols):
                 key  = (r, c)
                 cell = self.forest_info.get(key, {})
-                # 1. burning or not
-                fire_count.append(float(cell.get('state', 0)))
-                # 2. fuel load (reuse max_fire as placeholder)
+
+                # if state==6, report 0; else report its state
+                st = cell.get('state', 0)
+                fire_count.append(0.0 if st == 6 else float(st))
+
                 fuel_load.append(float(cell.get('max_fire', 1)))
-                # 3. vegetation label
                 vegetation.append(cell.get('vegetation', 'sparse'))
 
-        # publish fire_count
-        fc_msg = Float32MultiArray()
-        fc_msg.data = fire_count
+        fc_msg = Float32MultiArray(data=fire_count)
+        fl_msg = Float32MultiArray(data=fuel_load)
+        veg_msg = String(data=json.dumps(vegetation))
+
         self.fire_count_pub.publish(fc_msg)
-
-        # publish fuel_load
-        fl_msg = Float32MultiArray()
-        fl_msg.data = fuel_load
         self.fuel_load_pub.publish(fl_msg)
-
-        # publish vegetation JSON
-        veg_msg = String()
-        veg_msg.data = json.dumps(vegetation)
         self.vegetation_pub.publish(veg_msg)
-
         self.get_logger().info("Published /grid/fire_count, /grid/fuel_load, /grid/vegetation")
 
 

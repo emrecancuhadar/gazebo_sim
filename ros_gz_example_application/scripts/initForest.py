@@ -63,10 +63,9 @@ class InitForest(Node):
         # ----------------------------------
         # Define your “center” fires
         centers = [
-            (0, 0, 2),   # (row, col, fire_strength),
-            (0, 9, 1),
-            (9, 9, 1),
-            (9, 0, 1)
+            #(row, col, fire_strength),
+            (3, 3, 1),  
+            (9, 9, 1)
         ]
 
         # Build a map from (row,col) -> (state, cstate)

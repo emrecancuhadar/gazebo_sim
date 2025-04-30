@@ -137,6 +137,7 @@ class FireCellGoalClient(Node):
         self.update_interval  = 1.0
         self.goal_active      = False
         self.current_goal     = [0.0, 0.0]
+        self.prev_best_center = None
 
         # Parameters for grid dimensions and platform size (real-world)
         self.grid_rows               = self.declare_parameter("grid_rows", 10).value
@@ -158,7 +159,7 @@ class FireCellGoalClient(Node):
         self.precipitation_threshold = self.declare_parameter("precipitation_threshold", 1000.0).value
         self.temperature_celsius     = self.declare_parameter("temperature", 25.0).value
         self.temperature_threshold   = self.declare_parameter("temperature_threshold", 30.0).value
-        self.wind_direction_param    = self.declare_parameter("wind_direction", "N").value
+        self.wind_direction_param    = self.declare_parameter("wind_direction", "E").value
         self.wind_fuel_weight = 0.1  # Weight for the additional wind fuel effect:
 
         # Global vegetation multipliers based on your image processor classes.
@@ -262,24 +263,24 @@ class FireCellGoalClient(Node):
     def log_scoring_parameters(self, candidate_cells, rainfall_factor, temperature_factor):
         """Log all variables affecting score to a file for review."""
         try:
-            with open("scoring_parameters.log", "w") as f:
+            cell = candidate_cells[0]  # Assuming only one candidate cell for logging
+            with open("scoring_parameters.log", "a") as f:
                 f.write("Scoring Parameters for Candidate Cells:\n")
-                for cell in candidate_cells:
-                    f.write(f"Cell at {cell['center']}:\n")
-                    f.write(f"  Fire Intensity: {cell['fire_intensity']:.2f}\n")
-                    f.write(f"  Heat Yield (H): {cell['H']:.2f} kJ/kg\n")
-                    f.write(f"  Fuel Load (w): {cell['w']:.2f} kg/m²\n")
-                    f.write(f"  fire_count (r): {cell['r']}\n")
-                    f.write(f"  Distance: {cell['distance']:.2f} m\n")
-                    f.write(f"  Relative Humidity: {cell['relative_humidity']:.2f}%\n")
-                    f.write(f"  Vegetation: {cell['vegetation']}\n")
-                    f.write(f"  Veg Factor: {self.vegetation_factors.get(cell['vegetation'], 1.0):.2f}\n")
-                    f.write(f"  Flammability: {cell['flammability']:.2f}\n")
-                    f.write(f"  Wind Speed: {cell['wind_speed']:.2f} m/s\n")
-                    f.write(f"  Wind Fuel Sum: {cell.get('wind_fuel_sum', 0):.2f} kg/m²\n")
-                    f.write(f"  VPD: {cell['vpd']:.3f} kPa\n")
-                    f.write(f"  Score: {cell['score']:.2f}\n")
-                    f.write("\n")
+                f.write(f"Cell at {cell['center']}:\n")
+                f.write(f"  Fire Intensity: {cell['fire_intensity']:.2f}\n")
+                f.write(f"  Heat Yield (H): {cell['H']:.2f} kJ/kg\n")
+                f.write(f"  Fuel Load (w): {cell['w']:.2f} kg/m²\n")
+                f.write(f"  fire_count (r): {cell['r']}\n")
+                f.write(f"  Distance: {cell['distance']:.2f} m\n")
+                f.write(f"  Relative Humidity: {cell['relative_humidity']:.2f}%\n")
+                f.write(f"  Vegetation: {cell['vegetation']}\n")
+                f.write(f"  Veg Factor: {self.vegetation_factors.get(cell['vegetation'], 1.0):.2f}\n")
+                f.write(f"  Flammability: {cell['flammability']:.2f}\n")
+                f.write(f"  Wind Speed: {cell['wind_speed']:.2f} m/s\n")
+                f.write(f"  Wind Fuel Sum: {cell.get('wind_fuel_sum', 0):.2f} kg/m²\n")
+                f.write(f"  VPD: {cell['vpd']:.3f} kPa\n")
+                f.write(f"  Score: {cell['score']:.2f}\n")
+                f.write("\n")
                 f.write(f"Global Rainfall Factor: {rainfall_factor}\n")
                 f.write(f"Global Temperature Factor: {temperature_factor}\n")
             self.get_logger().info("Scoring parameters logged to 'scoring_parameters.log'.")
@@ -355,7 +356,8 @@ class FireCellGoalClient(Node):
             'flammability':   0.15,
             'fire_intensity': 0.25,
             'wind_fuel':      self.wind_fuel_weight,
-            'vpd':            0.15
+            'vpd':            0.15,
+            'wind_speed':     0.1
         }
 
         global_wind_speed = self.wind_speed_val
@@ -390,6 +392,7 @@ class FireCellGoalClient(Node):
 
                 # --- Build best_cell dict for detailed logging ---
         best_cell = {
+            'center':          (new_goal),
             'score':           float(score[br, bc]),
             'fire_intensity':  float(fire_intensity[br, bc]),
             'H':               float(self.H_arr[br, bc]),
@@ -400,10 +403,14 @@ class FireCellGoalClient(Node):
             'wind_fuel_sum':   float(wind_fuel_sum[br, bc]),
             'flammability':    float(flammability[br, bc]),
             'vpd':             float(vpd_val),
-            'relative_humidity': float(self.rh_val)
+            'relative_humidity': float(self.rh_val),
+            'vegetation': (vegetation_array[br, bc]),
+            'veg_factor': (vegetation_array[br, bc])
         }
         
-        self.log_scoring_parameters([best_cell], rainfall_factor, temperature_factor)
+        if new_goal != self.prev_best_center:
+            self.log_scoring_parameters([best_cell], rainfall_factor, temperature_factor)
+            self.prev_best_center = new_goal
 
         # === DETAILED LOGGING LIKE REQUESTED ===
         self.get_logger().info(
