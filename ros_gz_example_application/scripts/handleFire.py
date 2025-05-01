@@ -29,16 +29,25 @@ class HandleFire(Node):
         self.robot_cell = None
         self.paused_cells = {}  # key → pause_end_time (epoch seconds)
 
+        self._last_pose = None  # will hold (x, y, row, col)
+
         # Counters
         self.spawn_count = 0
         self.delete_count = 0
         self.start_time = time.time()
+        
 
-        # Subscribers & Publishers
-        #  - forest_info should eventually include a 'detected_balls' field for each cell
-        self.create_subscription(String, 'forest_info', self.forest_info_callback, 10)
-        self.forest_info_pub = self.create_publisher(String, 'forest_info', 10)
+        # Initial forest_info subscription: keep only first snapshot
+        self.initial_info_received = False
+        self.forest_info_sub = self.create_subscription(
+            String, 'forest_info', self.forest_info_callback, 10
+        )
+        # Publisher for downstream _processed_ forest info
+        self.forest_info_pub = self.create_publisher(String, '/processed_forest_info', 10)
+
+        # Odometry subscriber
         self.create_subscription(Odometry, '/diff_drive/odometry', self.odometry_callback, 10)
+
 
         # Wind (for simple, single-direction spread)
         self.wind_dx = 1
@@ -50,6 +59,7 @@ class HandleFire(Node):
         # Timers
         self.create_timer(2.0, self.update_burning_cells)
         self.create_timer(5.0, self.print_counters)
+        self.create_timer(2.0, self.log_robot_position)
         self.spawn_wind_model(self.wind_dx, self.wind_dy)
 
     def run_cmd_with_retry(self, cmd, timeout=4.0, retries=5):
@@ -89,15 +99,27 @@ class HandleFire(Node):
 
     def forest_info_callback(self, msg):
         try:
+            # only grab the VERY FIRST non-empty forest_info
+            if self.initial_info_received:
+                return
+
             cells = json.loads(msg.data)
+            if len(cells) == 0:
+                # we got an empty one (probably our own!), so wait for the real publisher
+                self.get_logger().info("forest_info_callback: empty, waiting for real data…")
+                return
+
+            # now we have data!
             for cell in cells:
-                key = (cell["row"], cell["col"])
-                # only accept newer cstate
-                if key in self.forest_info and self.forest_info[key].get("cstate",0) > cell.get("cstate",0):
-                    continue
-                # you can include 'detected_balls' in each cell dict to drive initial cstate
+                key = (cell['row'], cell['col'])
                 self.forest_info[key] = cell
-            self.get_logger().info(f"Forest info updated ({len(self.forest_info)} cells)")
+            self.initial_info_received = True
+
+            # tear down this sub so we don't hear our own republish
+            self.destroy_subscription(self.forest_info_sub)
+            self.get_logger().info(
+                f"Initial forest_info loaded ({len(self.forest_info)} cells); unsubscribed."
+            )       
         except Exception as e:
             self.get_logger().error(f"Error parsing forest_info: {e}")
 
@@ -117,8 +139,7 @@ class HandleFire(Node):
         row = max(0, min(self.grid_rows - 1, row))
         col = max(0, min(self.grid_cols - 1, col))
 
-        self.get_logger().info(f"Robot at x={x:.2f}, y={y:.2f} → cell ({row}, {col})")
-        time.sleep(1.5)
+        self._last_pose = (x, y, row, col)
         if not (0 <= row < self.grid_rows and 0 <= col < self.grid_cols):
             return
 
@@ -129,11 +150,18 @@ class HandleFire(Node):
             cx = self.offset_x + key[1] * self.cell_size
             cy = self.offset_y + (self.grid_rows - 1 - key[0]) * self.cell_size
             dist = ((x - cx)**2 + (y - cy)**2)**0.5
-            if dist <= 0.10 and key not in self.paused_cells:
+            if dist <= 0.05 and key not in self.paused_cells:
                 # record the moment we arrived
                 self.paused_cells[key] = time.time()
                 self.get_logger().info(f"Paused cell {key} at t={self.paused_cells[key]:.1f}")
 
+    def log_robot_position(self):
+        # called by timer every 2s
+        # called by timer every 2s to report the last-seen odom
+        if self._last_pose is None:
+            return
+        x, y, row, col = self._last_pose
+        self.get_logger().info(f"Robot at x={x:.2f}, y={y:.2f} → cell ({row}, {col})")
 
     def update_burning_cells(self):
         self._pending_spreads.clear()
@@ -155,6 +183,9 @@ class HandleFire(Node):
                 cell["cstate"] = -1
                 self.get_logger().info(f"30 s done for {key}; forcing state 6")
                 self.update_cell(key, force_state=6)
+                # *immediately* push out the new zeroed grid so clients can pick up
+                self.publish_forest_info()
+                self.publish_grid_data()
                 continue
 
 
@@ -223,7 +254,7 @@ class HandleFire(Node):
         )
         x = self.offset_x + key[1] * self.cell_size
         y = self.offset_y + (self.grid_rows - 1 - key[0]) * self.cell_size
-        name = f"forest_cell{key[0]}_{key[1]}_{int(time.time()*1000)}"
+        name = f"forest_cell{key[0]}_{key[1]}"
         try:
             self.run_cmd_with_retry([
                 "ros2", "run", "ros_gz_sim", "create", "-demo", "default",
@@ -307,7 +338,7 @@ class HandleFire(Node):
         )
         x = self.offset_x + key[1] * self.cell_size
         y = self.offset_y + (self.grid_rows - 1 - key[0]) * self.cell_size
-        name = f"forest_cell{key[0]}_{key[1]}_{int(time.time()*1000)}"
+        name = f"forest_cell{key[0]}_{key[1]}"
         cmd = [
             "ros2", "run", "ros_gz_sim", "create", "-demo", "default",
             "-file", sdf, "-x", str(x), "-y", str(y), "-z", "0.01", "-name", name
@@ -337,7 +368,7 @@ class HandleFire(Node):
         msg = String()
         msg.data = json.dumps(list(self.forest_info.values()))
         self.forest_info_pub.publish(msg)
-        self.get_logger().info("Published updated forest_info")
+        self.get_logger().info("Published updated processed_forest_info")
 
     def publish_grid_data(self):
         fire_count = []

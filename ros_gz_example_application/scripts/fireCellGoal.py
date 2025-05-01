@@ -142,6 +142,10 @@ class FireCellGoalClient(Node):
         self.current_goal     = [0.0, 0.0]
         self.prev_best_center = None
 
+        # NEW: only dispatch a goal when extinguish finished
+        self.ready_for_next = True
+        self.just_extinguished = None
+
         # Parameters for grid dimensions and platform size (real-world)
         self.grid_rows               = self.declare_parameter("grid_rows", 10).value
         self.grid_cols               = self.declare_parameter("grid_cols", 10).value
@@ -198,8 +202,15 @@ class FireCellGoalClient(Node):
         self.current_pose[1] = odom_msg.pose.pose.position.y
 
     def fire_count_callback(self, msg: Float32MultiArray):
-        # Store fire count data (flat list in row-major order)
         self.grid_data = msg.data
+        if self.just_extinguished is not None:
+            # unwrap flat list into 2D
+            arr = np.array(self.grid_data).reshape(self.grid_rows, self.grid_cols)
+            r, c = self.just_extinguished
+            if arr[r, c] == 0.0:
+                self.get_logger().info(f"Grid cell {(r,c)} cleared — OK, picking next fire")
+                self.just_extinguished = None
+                self.ready_for_next   = True
         self.try_process_grid()
 
     def fuel_load_callback(self, msg: Float32MultiArray):
@@ -433,6 +444,10 @@ class FireCellGoalClient(Node):
             f"temperature_factor {temperature_factor} with temperature {self.temperature_celsius:.2f}°C"
         )
 
+        # NEW: only dispatch if extinguish finished
+        if not self.ready_for_next:
+            return
+
         # If a goal is already active, compare distances to decide whether to update the goal.
         if self.goal_active:
             current_goal_distance = math.hypot((self.current_goal[0] - robot_x), 
@@ -452,7 +467,8 @@ class FireCellGoalClient(Node):
     def send_goal(self, x, y):
         msg = Float32MultiArray()
         msg.data = [float(x), float(y)]
-        self.goal_active = True
+        self.goal_active     = True
+        self.ready_for_next = False  
         self.get_logger().info(f"Sending goal to cell center at x={x:.2f}, y={y:.2f}")
         self.goal_pub.publish(msg)
     
@@ -481,8 +497,16 @@ class FireCellGoalClient(Node):
         )
 
     def done_callback(self, msg):
-        self.get_logger().info(f"FireCellGoalClient: cleared active goal → {msg.data}")
+        x, y = map(float, msg.data.split(','))
+        idx = np.argwhere((self.x_grid==x) & (self.y_grid==y))
+        if idx.size:
+            r,c = idx[0]
+            self.just_extinguished = (int(r), int(c))
+
+        self.ready_for_next = False
         self.goal_active = False
+        self.get_logger().info(f"Extinguish done: ({x:.2f},{y:.2f}); waiting for grid zero")
+
 
 def main(args=None):
     rclpy.init(args=args)

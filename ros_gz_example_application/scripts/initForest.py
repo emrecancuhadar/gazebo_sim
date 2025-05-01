@@ -64,7 +64,8 @@ class InitForest(Node):
         # Define your “center” fires
         centers = [
             #(row, col, fire_strength),
-            (1, 1, 5)
+            (1, 1, 5),
+            (7, 7, 2)
         ]
 
         # Build a map from (row,col) -> (state, cstate)
@@ -133,7 +134,7 @@ class InitForest(Node):
         sdf=os.path.join(self.share_dir,'models',f'forest_{mf}_ball',f'forest_{mf}_ball_state_{state}','model.sdf')
         x=self.offset_x+col*self.cell_size
         y=self.offset_y+(self.grid_rows-1-row)*self.cell_size
-        name=f"forest_cell{row}_{col}_{int(time.time()*1000)}"
+        name=f"forest_cell{row}_{col}"
         cmd=["ros2","run","ros_gz_sim","create","-demo","default","-file",sdf,
              "-x",str(x),"-y",str(y),"-z","0.01","-name",name]
         try:
