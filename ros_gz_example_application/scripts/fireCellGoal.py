@@ -127,6 +127,9 @@ class FireCellGoalClient(Node):
         # — Instead of an action client, create a simple publisher —
         self.goal_pub = self.create_publisher(Float32MultiArray, "/fire_cell_goal", 10)
 
+        self.create_subscription(String, '/fire_cell_done',
+                                 self.done_callback, 10)
+
         
         # State
         self.current_pose     = [0.0, 0.0]
@@ -476,6 +479,10 @@ class FireCellGoalClient(Node):
         self.get_logger().info(
             f"Feedback: Current position ({feedback.current_x}, {feedback.current_y}), Distance: {feedback.distance}"
         )
+
+    def done_callback(self, msg):
+        self.get_logger().info(f"FireCellGoalClient: cleared active goal → {msg.data}")
+        self.goal_active = False
 
 def main(args=None):
     rclpy.init(args=args)

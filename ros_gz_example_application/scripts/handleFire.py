@@ -354,7 +354,7 @@ class HandleFire(Node):
                 fire_count.append(0.0 if st == 6 else float(st))
 
                 fuel_load.append(float(cell.get('max_fire', 1)))
-                vegetation.append(cell.get('vegetation', 'sparse'))
+                vegetation.append(cell.get('label', 'sparse'))
 
         fc_msg = Float32MultiArray(data=fire_count)
         fl_msg = Float32MultiArray(data=fuel_load)

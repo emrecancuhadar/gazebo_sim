@@ -3,20 +3,21 @@ import rclpy
 import math
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 from nav_msgs.msg import Odometry
 from tf_transformations import euler_from_quaternion
+import time
 
 class GoToGoal(Node):
     def __init__(self):
         super().__init__('go_to_goal')
 
         # --- Publishers / Subscribers ---
-        self.vel_pub = self.create_publisher(Twist, "/diff_drive/cmd_vel", 10)
-        self.create_subscription(Odometry, "/diff_drive/odometry",
-                                 self.odom_callback, 10)
-        self.create_subscription(Float32MultiArray, "/fire_cell_goal",
-                                 self.goal_callback, 10)
+        self.vel_pub  = self.create_publisher(Twist, "/diff_drive/cmd_vel", 10)
+        self.done_pub = self.create_publisher(String, "/fire_cell_done", 10)
+
+        self.create_subscription(Odometry,             "/diff_drive/odometry", self.odom_callback, 10)
+        self.create_subscription(Float32MultiArray,    "/fire_cell_goal",     self.goal_callback, 10)
 
         # --- Robot State ---
         self.robot_position    = (0.0, 0.0)
@@ -26,14 +27,14 @@ class GoToGoal(Node):
         self.aligned           = False   # ← alignment state
 
         # --- Speed & Control Params ---
-        self.max_linear_speed   = 0.1    # m/s
-        self.max_angular_speed  = 0.1    # rad/s
-        self.lin_gain           = 0.6
-        self.ang_gain           = 0.5
+        self.max_linear_speed  = 0.1    # m/s
+        self.max_angular_speed = 0.1    # rad/s
+        self.lin_gain          = 0.6
+        self.ang_gain          = 0.5
 
         # Hysteresis thresholds (rad)
-        self.align_tol          = 0.05   # when |err| < 0.05, we declare “aligned”
-        self.unalign_tol        = 0.15   # when |err| > 0.15, we go back to “aligning”
+        self.align_tol   = 0.05   # when |err| < 0.05, we declare “aligned”
+        self.unalign_tol = 0.15   # when |err| > 0.15, we go back to “aligning”
 
         # --- Timer to run control loop ---
         self.create_timer(0.1, self.navigate)
@@ -55,7 +56,7 @@ class GoToGoal(Node):
         if len(msg.data) >= 2:
             self.current_goal = (msg.data[0], msg.data[1])
             self.goal_active  = True
-            self.aligned      = False  # reset alignment on new goal
+            self.aligned      = False
             self.get_logger().info(
                 f"New goal: x={self.current_goal[0]:.2f}, y={self.current_goal[1]:.2f}"
             )
@@ -69,42 +70,46 @@ class GoToGoal(Node):
         dx, dy         = x_goal - x, y_goal - y
         dist           = math.hypot(dx, dy)
         target_theta   = math.atan2(dy, dx)
-        err            = math.atan2(
-                            math.sin(target_theta - self.robot_orientation),
-                            math.cos(target_theta - self.robot_orientation)
-                         )
+        err = math.atan2(
+            math.sin(target_theta - self.robot_orientation),
+            math.cos(target_theta - self.robot_orientation)
+        )
 
-        # Check goal reached
+        # --- Check goal reached ---
         if dist < 0.05:
-            self.get_logger().info(f"Reached ({x_goal:.2f}, {y_goal:.2f})")
+            # 1) Stop
             self.stop_robot()
+            self.get_logger().info(f"Reached ({x_goal:.2f}, {y_goal:.2f}) → waiting 30 s before reporting done")
+
+            # 2) Wait 30 s
+            time.sleep(30)
+
+            # 3) Publish done notice
+            done = String()
+            done.data = f"{x_goal:.2f},{y_goal:.2f}"
+            self.done_pub.publish(done)
+            self.get_logger().info("Done published, ready for next goal")
+
+            # 4) Clear active goal
             self.goal_active = False
             return
 
+        # --- Normal control (rotate or drive) ---
         twist = Twist()
-
-        # Phase switching with hysteresis
         if not self.aligned:
-            # if error small enough, switch to driving
             if abs(err) < self.align_tol:
                 self.aligned = True
             else:
-                # ROTATE phase
                 ang = self.ang_gain * err
-                ang = max(-self.max_angular_speed,
-                          min(self.max_angular_speed, ang))
+                ang = max(-self.max_angular_speed, min(self.max_angular_speed, ang))
                 twist.angular.z = ang
-                twist.linear.x  = 0.0
         else:
-            # if drift too large, go back to aligning
             if abs(err) > self.unalign_tol:
                 self.aligned = False
             else:
-                # DRIVE phase
                 lin = self.lin_gain * dist
                 lin = min(self.max_linear_speed, lin)
-                twist.linear.x  = lin
-                twist.angular.z = 0.0
+                twist.linear.x = lin
 
         self.vel_pub.publish(twist)
 
