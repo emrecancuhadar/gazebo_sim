@@ -366,7 +366,7 @@ class FireCellGoalClient(Node):
 
         # --- Weights and dynamic wind-speed weight ---
         weights = {
-            'distance':       0.2,
+            'distance':       0.4,
             'flammability':   0.15,
             'fire_intensity': 0.25,
             'wind_fuel':      self.wind_fuel_weight,
@@ -429,18 +429,18 @@ class FireCellGoalClient(Node):
         # === DETAILED LOGGING LIKE REQUESTED ===
         self.get_logger().info(
             f"Candidate cell at {new_goal} with final score {best_cell['score']:.2f}:\n"
-            f"fire_intensity {best_cell['fire_intensity']:.2f} kW/m, "
-            f"low heat of combustion (H) {best_cell['H']:.2f} kJ/kg, "
-            f"fuel_load (w) {best_cell['w']:.2f} kg/m², "
-            f"fire_count (r) {best_cell['r']} m/s, "
-            f"distance {best_cell['distance']:.2f} m, "
-            f"wind_speed {best_cell['wind_speed']:.2f} m/s (global weight {final_ws_weight}), "
-            f"wind_fuel_sum {best_cell['wind_fuel_sum']:.2f} kg/m², "
-            f"Flammability {best_cell['flammability']:.2f}, "
-            f"VPD {best_cell['vpd']:.3f} kPa, "
-            f"relative_humidity {best_cell['relative_humidity']:.2f}%, "
-            f"temperature {self.temperature_celsius:.2f}°C, "
-            f"rainfall_factor {rainfall_factor} with rainfall {self.precipitation:.2f} mm, "
+            f"fire_intensity {best_cell['fire_intensity']:.2f} kW/m,\n "
+            f"low heat of combustion (H) {best_cell['H']:.2f} kJ/kg,\n "
+            f"fuel_load (w) {best_cell['w']:.2f} kg/m²,\n "
+            f"fire_count (r) {best_cell['r']} m/s,\n "
+            f"distance {best_cell['distance']:.2f} m,\n "
+            f"wind_speed {best_cell['wind_speed']:.2f} m/s (global weight {final_ws_weight}),\n "
+            f"wind_fuel_sum {best_cell['wind_fuel_sum']:.2f} kg/m²,\n "
+            f"Flammability {best_cell['flammability']:.2f},\n "
+            f"VPD {best_cell['vpd']:.3f} kPa,\n "
+            f"relative_humidity {best_cell['relative_humidity']:.2f}%,\n "
+            f"temperature {self.temperature_celsius:.2f}°C,\n "
+            f"rainfall_factor {rainfall_factor} with rainfall {self.precipitation:.2f} mm,\n "
             f"temperature_factor {temperature_factor} with temperature {self.temperature_celsius:.2f}°C"
         )
 

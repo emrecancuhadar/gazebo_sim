@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-import rclpy
-import math
+import rclpy, math
 from collections import deque
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
@@ -53,24 +52,34 @@ class GoToGoal(Node):
         self.robot_orientation = yaw
 
     def goal_callback(self, msg: Float32MultiArray):
-        if len(msg.data) >= 2:
-            goal = (msg.data[0], msg.data[1])
-            self.goal_queue.append(goal)
-            self.get_logger().info(
-                f"Queued goal: x={goal[0]:.2f}, y={goal[1]:.2f}"
-            )
+        """Receive a new goal.  Preempt the active one if we’re driving."""
+        if len(msg.data) < 2:
+            return
+        new_goal = (msg.data[0], msg.data[1])
+        self.get_logger().info(f"Received goal: {new_goal}")
+
+        if self.waiting_extinguish:
+            # during extinguish, queue up
+            self.goal_queue.append(new_goal)
+            self.get_logger().info("→ Currently extinguishing; queued for later.")
+        elif self.goal_active:
+            # preempt current drive goal
+            self.current_goal = new_goal
+            self.aligned = False
+            self.get_logger().info(f"→ Preempting and switching to new goal {new_goal}")
+        else:
+            # idle: just queue & start
+            self.goal_queue.append(new_goal)
             self.next_goal()
 
     def next_goal(self):
-        if (not self.waiting_extinguish and not self.goal_active
-            and self.goal_queue):
+        """Pop a goal off the queue if we’re not extinguishing or already driving."""
+        if not self.waiting_extinguish and not self.goal_active and self.goal_queue:
             self.current_goal = self.goal_queue.popleft()
             self.goal_active  = True
             self.aligned      = False
-            self.get_logger().info(
-                f"New active goal: x={self.current_goal[0]:.2f}, "
-                f"y={self.current_goal[1]:.2f}"
-            )
+            x, y = self.current_goal
+            self.get_logger().info(f"New active goal: ({x:.2f}, {y:.2f})")
 
     def navigate(self):
         if not self.goal_active or self.current_goal is None:
@@ -86,7 +95,7 @@ class GoToGoal(Node):
             math.cos(target_theta - self.robot_orientation)
         )
 
-        # Check if reached
+        # reached?
         if dist < 0.05:
             self.stop_robot()
             self.get_logger().info(
@@ -94,45 +103,40 @@ class GoToGoal(Node):
             )
             self.goal_active        = False
             self.waiting_extinguish = True
-            # start one-shot timer for extinguish
+            # start extinguish timer
             self.ext_timer = self.create_timer(30.0, self.extinguish_done)
             return
 
-        # Otherwise, rotate or drive
+        # otherwise: either rotate to align, or drive straight
         twist = Twist()
         if not self.aligned:
             if abs(err) < self.align_tol:
                 self.aligned = True
             else:
                 ang = self.ang_gain * err
-                ang = max(-self.max_angular_speed,
-                          min(self.max_angular_speed, ang))
-                twist.angular.z = ang
+                twist.angular.z = max(-self.max_angular_speed,
+                                      min(self.max_angular_speed, ang))
         else:
             if abs(err) > self.unalign_tol:
                 self.aligned = False
             else:
                 lin = self.lin_gain * dist
-                lin = min(self.max_linear_speed, lin)
-                twist.linear.x = lin
+                twist.linear.x = min(self.max_linear_speed, lin)
 
         self.vel_pub.publish(twist)
 
     def extinguish_done(self):
-        # cancel the timer
+        # extinguish finishes: cancel timer, publish done, then start next
         self.ext_timer.cancel()
         self.waiting_extinguish = False
 
-        # publish done notice
         x, y = self.current_goal
         done = String()
         done.data = f"{x:.2f},{y:.2f}"
         self.done_pub.publish(done)
-        self.get_logger().info(
-            f"Extinguish done: ({x:.2f},{y:.2f}); ready for next"
-        )
+        self.get_logger().info(f"Extinguish done: ({x:.2f}, {y:.2f}); ready for next")
 
-        # start next queued goal, if any
+        # kick off the next queued goal, if any
         self.next_goal()
 
     def stop_robot(self):

@@ -64,15 +64,24 @@ class InitForest(Node):
         # Define your “center” fires
         centers = [
             #(row, col, fire_strength),
-            (1, 1, 5),
-            (7, 7, 2)
+            (8, 8, 2),
+            (5, 1, 2),
+            (0, 0, 2),
+            (2, 2, 2),
+            (1, 3, 2)
         ]
 
         # Build a map from (row,col) -> (state, cstate)
         spawn_map = {}
-        # Phase 1: schedule the centers
+        # Phase 1: schedule the centers with dynamic cstate-spacing
+        n_states = 5
+
         for i, j, fv in centers:
-            cs = (fv - 1) * 200 + 1
+            cell   = self.forest_info[(i, j)]
+            m      = cell['max_fire']
+            c_max  = m * 200
+            interval = c_max / (n_states)   # = c_max/15
+            cs     = int(interval * (fv - 1) + 1)
             spawn_map[(i, j)] = (fv, cs)
 
         # Phase 2: schedule *only* healthy neighbours
