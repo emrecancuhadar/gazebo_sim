@@ -131,6 +131,10 @@ class FireCellGoalClient(Node):
                                  self.done_callback, 10)
 
         
+
+        self.blacklist = set()
+
+        
         # State
         self.current_pose     = [0.0, 0.0]
         self.grid_data        = None
@@ -203,15 +207,40 @@ class FireCellGoalClient(Node):
 
     def fire_count_callback(self, msg: Float32MultiArray):
         self.grid_data = msg.data
+        arr = np.array(self.grid_data).reshape(self.grid_rows, self.grid_cols)
+
+        # 1) If our current_goal cell has gone to zero, we need to replan:
+        if self.current_goal is not None:
+            # find its (r,c) in the grid
+            idx = np.argwhere(
+                (self.x_grid == self.current_goal[0]) &
+                (self.y_grid == self.current_goal[1])
+            )
+            if idx.size:
+                r, c = idx[0]
+                if arr[r, c] == 0.0:
+                    self.get_logger().info(
+                        f"Current target cell {(r,c)} just burnt out → re‐planning."
+                    )
+                    # blacklist it so we never pick it again
+                    self.blacklist.add((r, c))
+                    # pretend we just finished extinguishing so we unlock planning
+                    self.goal_active     = False
+                    self.ready_for_next  = True
+                    self.current_goal    = None
+
+        # 2) Your existing “just_extinguished” logic (robot‐callback un‐blacklisting)
         if self.just_extinguished is not None:
-            # unwrap flat list into 2D
-            arr = np.array(self.grid_data).reshape(self.grid_rows, self.grid_cols)
             r, c = self.just_extinguished
             if arr[r, c] == 0.0:
-                self.get_logger().info(f"Grid cell {(r,c)} cleared — OK, picking next fire")
+                self.get_logger().info(f"Grid cell {(r,c)} cleared — un‐blacklisting")
+                self.blacklist.discard((r, c))
                 self.just_extinguished = None
-                self.ready_for_next   = True
+                self.ready_for_next    = True
+
+        # now try to pick a brand-new or “closer” goal
         self.try_process_grid()
+
 
     def fuel_load_callback(self, msg: Float32MultiArray):
         # Store fuel load (w) data (flat list in row-major order)
@@ -311,6 +340,8 @@ class FireCellGoalClient(Node):
         vegetation_array = np.array(self.vegetation_data).reshape((self.grid_rows, self.grid_cols))
 
         mask = fire_counts > 0
+        for (br, bc) in self.blacklist:
+            mask[br, bc] = False
         if not np.any(mask):
             self.get_logger().info("No active fire cells.")
             return
@@ -444,9 +475,6 @@ class FireCellGoalClient(Node):
             f"temperature_factor {temperature_factor} with temperature {self.temperature_celsius:.2f}°C"
         )
 
-        # NEW: only dispatch if extinguish finished
-        if not self.ready_for_next:
-            return
 
         # If a goal is already active, compare distances to decide whether to update the goal.
         if self.goal_active:
@@ -501,7 +529,7 @@ class FireCellGoalClient(Node):
         idx = np.argwhere((self.x_grid==x) & (self.y_grid==y))
         if idx.size:
             r,c = idx[0]
-            self.just_extinguished = (int(r), int(c))
+            self.blacklist.add((int(r), int(c)))
 
         self.ready_for_next = False
         self.goal_active = False

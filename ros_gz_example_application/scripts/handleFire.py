@@ -193,6 +193,14 @@ class HandleFire(Node):
             c = cell.get("cstate", 0)
             m = cell.get("max_fire", 1)
             c_max = m * 200
+
+            if c >= c_max * 3 and cell.get("state", 0) != 7:
+                self.get_logger().info(f"Cell {key} fully burnt, transitioning to state 7")
+                # force the visual into your “burnt-out” model
+                self.update_cell(key, force_state=7)
+                # and don’t do any more spread or state-5 logic for this cell
+                continue
+
             if c > 0 and c < c_max * 3:
                 interval = c_max / 5.0
 
@@ -382,7 +390,7 @@ class HandleFire(Node):
 
                 # if state==6, report 0; else report its state
                 st = cell.get('state', 0)
-                fire_count.append(0.0 if st == 6 else float(st))
+                fire_count.append(0.0 if st in (6, 7) else float(st))
 
                 fuel_load.append(float(cell.get('max_fire', 1)))
                 vegetation.append(cell.get('label', 'sparse'))

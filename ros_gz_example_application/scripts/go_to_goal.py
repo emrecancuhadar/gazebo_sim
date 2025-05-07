@@ -29,7 +29,7 @@ class GoToGoal(Node):
         self.aligned            = False
 
         # Control parameters
-        self.max_linear_speed  = 0.1
+        self.max_linear_speed  = 0.5
         self.max_angular_speed = 0.1
         self.lin_gain          = 0.6
         self.ang_gain          = 0.5

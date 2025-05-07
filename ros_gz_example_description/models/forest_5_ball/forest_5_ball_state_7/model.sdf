@@ -1,0 +1,28 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <model name="forest_5_ball_state_7">
+    <static>true</static>
+    <pose>0 0 0 0 0 0</pose>
+    <link name="cell_plane_link">
+      <visual name="cell_plane_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <plane>
+            <size>2 2 0.01</size>
+          </plane>
+        </geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+
+          <pbr>
+            <metal>
+              <albedo_map>forest_5_ball_state_7.jpg</albedo_map>
+            </metal>
+          </pbr>
+
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>
