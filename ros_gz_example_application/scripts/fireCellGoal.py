@@ -530,6 +530,7 @@ class FireCellGoalClient(Node):
         if idx.size:
             r,c = idx[0]
             self.blacklist.add((int(r), int(c)))
+            self.just_extinguished = (r, c)
 
         self.ready_for_next = False
         self.goal_active = False
