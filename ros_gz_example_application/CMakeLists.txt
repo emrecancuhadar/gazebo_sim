@@ -16,6 +16,9 @@ install(
     scripts/greenIntensity.py
     scripts/fourseasons.py
     scripts/fireCellGoal.py
+    scripts/setEntityService.py
+    scripts/movingPoseClient.py
+    scripts/realToSimPose.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
