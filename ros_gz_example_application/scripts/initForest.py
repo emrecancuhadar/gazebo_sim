@@ -6,6 +6,10 @@ import json, time, os, subprocess
 from subprocess import CalledProcessError, TimeoutExpired
 from ament_index_python.packages import get_package_share_directory
 
+from ros_gz_interfaces.srv import SpawnEntity
+from ros_gz_interfaces.msg import EntityFactory
+from geometry_msgs.msg import Pose
+
 class InitForest(Node):
     def __init__(self):
         super().__init__('init_forest')
@@ -33,6 +37,12 @@ class InitForest(Node):
         self.pub = self.create_publisher(String, 'forest_info', 10)
         self.get_logger().info("InitForest: Starting forest initialization...")
 
+        # Service client for spawn
+        self.spawn_cli = self.create_client(SpawnEntity, '/world/demo/create')
+        if not self.spawn_cli.wait_for_service(timeout_sec=5.0):
+            self.get_logger().error("InitForest: spawn service not available")
+            return
+
         # 1) Run greenIntensity
         intens = self.call_green_intensity_script()
         # 2) Run fourseasons
@@ -59,48 +69,34 @@ class InitForest(Node):
                     'label':label_map.get(code,'Unclassified')
                 }
 
-               # 4) DATA‐DRIVEN SPAWNS
-        # ----------------------------------
-        # Define your “center” fires
+        # 4) DATA‐DRIVEN SPAWNS
         centers = [
-            #(row, col, fire_strength),
             (8, 8, 2),
             (5, 1, 2),
             (0, 0, 2),
             (2, 2, 2),
             (1, 3, 2)
         ]
-
-        # Build a map from (row,col) -> (state, cstate)
         spawn_map = {}
-        # Phase 1: schedule the centers with dynamic cstate-spacing
         n_states = 5
-
         for i, j, fv in centers:
             cell   = self.forest_info[(i, j)]
             m      = cell['max_fire']
             c_max  = m * 200
-            interval = c_max / (n_states)   # = c_max/15
+            interval = c_max / n_states
             cs     = int(interval * (fv - 1) + 1)
             spawn_map[(i, j)] = (fv, cs)
-
-        # Phase 2: schedule *only* healthy neighbours
         for i, j, _ in centers:
             for di in (-1, 0, 1):
                 for dj in (-1, 0, 1):
                     ni, nj = i + di, j + dj
-                    if (ni, nj) == (i, j):
-                        continue
-                    if not (0 <= ni < self.grid_rows and 0 <= nj < self.grid_cols):
-                        continue
-
+                    if (ni, nj) == (i, j): continue
+                    if not (0 <= ni < self.grid_rows and 0 <= nj < self.grid_cols): continue
                     nbr = self.forest_info[(ni, nj)]
-                    # only schedule if truly healthy
                     if nbr['cstate'] == 0:
-                        # state=0, cstate=0 for a “cold” neighbour
                         spawn_map.setdefault((ni, nj), (0, 0))
 
-        # Now do *one* pass over spawn_map and actually spawn each cell
+        # spawn each cell via service
         for (row, col), (st, cs) in spawn_map.items():
             self.spawn_cell(row, col, st, cs)
 
@@ -137,44 +133,52 @@ class InitForest(Node):
             return None
 
     def spawn_cell(self, row, col, state, cstate):
-        info=self.forest_info[(row,col)]
-        if info['spawned']: return
-        mf=info['max_fire']
-        sdf=os.path.join(self.share_dir,'models',f'forest_{mf}_ball',f'forest_{mf}_ball_state_{state}','model.sdf')
-        x=self.offset_x+col*self.cell_size
-        y=self.offset_y+(self.grid_rows-1-row)*self.cell_size
-        name=f"forest_cell{row}_{col}"
-        cmd=["ros2","run","ros_gz_sim","create","-demo","default","-file",sdf,
-             "-x",str(x),"-y",str(y),"-z","0.01","-name",name]
-        try:
-            self.run_cmd_with_retry(cmd)
-            info.update(state=state,cstate=cstate,model_name=name,spawned=True)
-            self.forest_info[(row,col)]=info
-            self.get_logger().info(f"Spawned cell {name} at {(row,col)} state {state}")
-            time.sleep(0.3)
-        except Exception as e:
-            self.get_logger().error(f"Spawn cell {name} failed: {e}")
+        info = self.forest_info[(row, col)]
+        if info['spawned']:
+            return
 
-    def run_cmd_with_retry(self, cmd, timeout=4.0, retries=3):
-        last=None
-        for i in range(1,retries+1):
-            try:
-                return subprocess.run(cmd,stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE,check=True,
-                                      text=True,timeout=timeout)
-            except (TimeoutExpired,CalledProcessError) as e:
-                last=e;self.get_logger().warn(f"[retry {i}/{retries}] {e}");time.sleep(0.5)
-        raise last
+        mf = info['max_fire']
+        sdf = os.path.join(
+            self.share_dir,
+            'models', f'forest_{mf}_ball',
+            f'forest_{mf}_ball_state_{state}',
+            'model.sdf'
+        )
+        x = self.offset_x + col*self.cell_size
+        y = self.offset_y + (self.grid_rows-1-row)*self.cell_size
+        name = f"forest_cell{row}_{col}"
+
+        # build and send service request instead of subprocess
+        req = SpawnEntity.Request()
+        req.entity_factory = EntityFactory(
+            name=name,
+            allow_renaming=False,
+            sdf_filename=sdf,
+            pose=Pose(),
+            relative_to='world'
+        )
+        req.entity_factory.pose.position.x = x
+        req.entity_factory.pose.position.y = y
+        req.entity_factory.pose.position.z = 0.01
+
+        self.spawn_cli.call_async(req)
+
+        info.update(state=state, cstate=cstate, model_name=name, spawned=True)
+        self.get_logger().info(f"Spawned cell {name} at {(row, col)} state {state}")
+        time.sleep(0.3)
 
     def publish_forest_info(self):
-        arr=list(self.forest_info.values())
-        msg=String();msg.data=json.dumps(arr)
+        arr = list(self.forest_info.values())
+        msg = String()
+        msg.data = json.dumps(arr)
         self.pub.publish(msg)
-
 
 def main(args=None):
     rclpy.init(args=args)
-    n=InitForest();rclpy.spin_once(n,timeout_sec=2);rclpy.shutdown()
+    node = InitForest()
+    # spin briefly so that async calls go out
+    rclpy.spin_once(node, timeout_sec=1.0)
+    rclpy.shutdown()
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()

@@ -96,7 +96,7 @@ class GoToGoal(Node):
         )
 
         # reached?
-        if dist < 0.05:
+        if dist < 0.02:
             self.stop_robot()
             self.get_logger().info(
                 f"Reached ({x_goal:.2f}, {y_goal:.2f}) → extinguishing 30 s"

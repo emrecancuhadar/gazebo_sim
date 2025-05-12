@@ -19,6 +19,7 @@ install(
     scripts/setEntityService.py
     scripts/movingPoseClient.py
     scripts/realToSimPose.py
+    scripts/spawner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

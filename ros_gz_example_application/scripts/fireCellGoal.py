@@ -170,7 +170,7 @@ class FireCellGoalClient(Node):
         self.precipitation_threshold = self.declare_parameter("precipitation_threshold", 1000.0).value
         self.temperature_celsius     = self.declare_parameter("temperature", 25.0).value
         self.temperature_threshold   = self.declare_parameter("temperature_threshold", 30.0).value
-        self.wind_direction_param    = self.declare_parameter("wind_direction", "E").value
+        self.wind_direction_param    = self.declare_parameter("wind_direction", "SE").value
         self.wind_fuel_weight = 0.1  # Weight for the additional wind fuel effect:
 
         # Global vegetation multipliers based on your image processor classes.
