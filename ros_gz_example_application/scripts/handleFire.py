@@ -26,6 +26,9 @@ class HandleFire(Node):
         self.fire_count_pub  = self.create_publisher(Float32MultiArray, '/grid/fire_count', 10)
         self.fuel_load_pub   = self.create_publisher(Float32MultiArray, '/grid/fuel_load', 10)
         self.vegetation_pub  = self.create_publisher(String,            '/grid/vegetation', 10)
+        self.elevation_pub   = self.create_publisher(Float32MultiArray, '/grid/elevation', 10)
+        self.slope_pub       = self.create_publisher(Float32MultiArray, '/grid/slope',     10)
+        self.aspect_pub      = self.create_publisher(Float32MultiArray, '/grid/aspect',    10)
         self.forest_info_pub = self.create_publisher(String,            '/processed_forest_info', 10)
 
         self.initial_info_received = False
@@ -396,17 +399,23 @@ class HandleFire(Node):
         self.forest_info_pub.publish(String(data=json.dumps(list(self.forest_info.values()))))
 
     def publish_grid_data(self):
-        fc, fl, veg = [], [], []
+        fc, fl, veg, elev, slo, asp = [], [], [], [], [], []
         for r in range(self.grid_rows):
             for c in range(self.grid_cols):
-                cell = self.forest_info.get((r,c), {})
-                st = cell.get("state",0)
-                fc.append(0.0 if st in (6,7) else float(st))
+                cell = self.forest_info.get((r,c),{})
+                st=cell.get("state",0)
+                fc.append(0.0 if st in(6,7) else float(st))
                 fl.append(float(cell.get("max_fire",1)))
                 veg.append(cell.get("label","sparse"))
+                elev.append(float(cell.get("elevation",0.0)))
+                slo.append(float(cell.get("slope",    0.0)))
+                asp.append(float(cell.get("aspect",   0.0)))
         self.fire_count_pub.publish(Float32MultiArray(data=fc))
         self.fuel_load_pub.publish(Float32MultiArray(data=fl))
         self.vegetation_pub.publish(String(data=json.dumps(veg)))
+        self.elevation_pub.publish(Float32MultiArray(data=elev))
+        self.slope_pub.publish(Float32MultiArray(data=slo))
+        self.aspect_pub.publish(Float32MultiArray(data=asp))
 
 
 def main(args=None):

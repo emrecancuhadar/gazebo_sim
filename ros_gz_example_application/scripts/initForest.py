@@ -46,27 +46,31 @@ class InitForest(Node):
         # 1) Run greenIntensity
         intens = self.call_green_intensity_script()
         # 2) Run fourseasons
-        labels = self.call_season_script()
-        if intens is None or labels is None:
+        season = self.call_season_script()
+        if intens is None or season is None:
             self.get_logger().error("InitForest: failed to compute grids")
             return
 
         # 3) Initialize forest_info
+        labels = season['classification']
+        self.dem   = season['elevation']
+        self.slope = season['slope']
+        self.aspect= season['aspect']
+
         label_map = {1:'Bare Soil',2:'Deciduous',3:'Coniferous',4:'Sparse Veg'}
         for i in range(self.grid_rows):
             for j in range(self.grid_cols):
                 v = intens[i][j]
-                if   v>1.7: m=5
-                elif v>1.4: m=4
-                elif v>1.1: m=3
-                elif v>0.8: m=2
-                else:      m=1
+                m = 5 if v>1.7 else 4 if v>1.4 else 3 if v>1.1 else 2 if v>0.8 else 1
                 code = int(labels[i][j])
                 self.forest_info[(i,j)] = {
-                    'row':i,'col':j,
-                    'max_fire':m,'state':0,'cstate':0,
+                    'row':i, 'col':j,
+                    'max_fire':m, 'state':0, 'cstate':0,
                     'model_name':None,'spawned':False,
-                    'label':label_map.get(code,'Unclassified')
+                    'label':label_map.get(code,'Unclassified'),
+                    'elevation':float(self.dem[i][j]),
+                    'slope':    float(self.slope[i][j]),
+                    'aspect':   float(self.aspect[i][j])
                 }
 
         # 4) DATA‐DRIVEN SPAWNS

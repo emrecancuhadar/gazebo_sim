@@ -23,7 +23,7 @@ class RealToSimPose(Node):
         # 2) Subscribe to your real‐robot odom
         self.create_subscription(
             Odometry,
-            'robot1/sim_localization',
+            'robot1/simlocalization',
             self.odom_callback,
             10)
 
