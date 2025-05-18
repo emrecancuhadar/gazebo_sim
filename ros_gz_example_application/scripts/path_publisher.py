@@ -6,65 +6,96 @@ from nav_msgs.msg import Path
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
+from rclpy.time import Time
 
-class PathPublisher(Node):
+class MultiPathPublisher(Node):
     def __init__(self):
-        super().__init__('path_publisher')
+        super().__init__('multi_path_publisher')
 
-        # TF buffer and listener
-        self.tf_buffer = Buffer()
+        # TF buffer & listener
+        self.tf_buffer   = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Path publisher
-        self.path_publisher = self.create_publisher(Path, '/robot_path', 10)
-        self.path_msg = Path()
-        self.path_msg.header.frame_id = "diff_drive/odom"  # Ensure consistent frame
+        # Which robots to track?
+        self.robot_list = self.declare_parameter(
+            'robot_list',
+            ['diff_drive', 'diff_drive2']
+        ).value
 
-        # Timer to update the path
-        self.timer = self.create_timer(0.1, self.update_path)
+        # Publishers, Path msgs & last positions
+        self.path_pubs         = {}    # <<-- renamed from publishers
+        self.paths             = {}
+        self.last_pos          = {}
+        self.distance_threshold = self.declare_parameter(
+            'distance_threshold', 0.05
+        ).value
 
-        self.last_x = None
-        self.last_y = None
-        self.distance_threshold = 0.05  # Minimum movement to record a new point
+        for ns in self.robot_list:
+            topic = f'/{ns}_path'
+            pub = self.create_publisher(Path, topic, 10)
 
-    def update_path(self):
-        try:
-            # Get the transform from odom -> base_link (robot frame)
-            transform = self.tf_buffer.lookup_transform("diff_drive/odom", "diff_drive/chassis", rclpy.time.Time())
+            path = Path()
+            path.header.frame_id = f'{ns}/odom'
 
-            pose = PoseStamped()
-            pose.header.stamp = self.get_clock().now().to_msg()
-            pose.header.frame_id = "diff_drive/odom"
+            self.path_pubs[ns] = pub      # <<-- use path_pubs
+            self.paths[ns]     = path
+            self.last_pos[ns]  = (None, None)
 
-            pose.pose.position.x = transform.transform.translation.x
-            pose.pose.position.y = transform.transform.translation.y
-            pose.pose.position.z = 0.0
-            pose.pose.orientation = transform.transform.rotation
+            self.get_logger().info(f'Publishing path for "{ns}" on "{topic}"')
 
-            # Avoid adding points if movement is too small
-            if self.last_x is not None and self.last_y is not None:
-                distance = ((pose.pose.position.x - self.last_x) ** 2 + (pose.pose.position.y - self.last_y) ** 2) ** 0.5
-                if distance < self.distance_threshold:
-                    return  # Ignore very small movements
+        # Timer to update both paths
+        self.create_timer(0.1, self.update_paths)
 
-            # Update last known position
-            self.last_x = pose.pose.position.x
-            self.last_y = pose.pose.position.y
+    def update_paths(self):
+        now_msg = self.get_clock().now().to_msg()
 
-            # Append pose and publish
-            self.path_msg.poses.append(pose)
-            self.path_msg.header.stamp = pose.header.stamp
-            self.path_publisher.publish(self.path_msg)
+        for ns in self.robot_list:
+            odom_frame = f'{ns}/odom'
+            base_frame = f'{ns}/chassis'
 
-        except (LookupException, ConnectivityException, ExtrapolationException):
-            self.get_logger().warn("TF lookup failed. Waiting for valid transform...")
+            try:
+                trans = self.tf_buffer.lookup_transform(
+                    odom_frame, base_frame, Time()
+                )
+
+                pose = PoseStamped()
+                pose.header.stamp    = now_msg
+                pose.header.frame_id = odom_frame
+                pose.pose.position.x = trans.transform.translation.x
+                pose.pose.position.y = trans.transform.translation.y
+                pose.pose.position.z = 0.0
+                pose.pose.orientation = trans.transform.rotation
+
+                # only record if moved enough
+                last_x, last_y = self.last_pos[ns]
+                if last_x is not None:
+                    dx = pose.pose.position.x - last_x
+                    dy = pose.pose.position.y - last_y
+                    if (dx*dx + dy*dy) < self.distance_threshold**2:
+                        continue
+
+                # append & publish
+                self.last_pos[ns] = (pose.pose.position.x, pose.pose.position.y)
+                path = self.paths[ns]
+                path.poses.append(pose)
+                path.header.stamp = now_msg
+                self.path_pubs[ns].publish(path)   # <<-- use path_pubs
+
+            except (LookupException, ConnectivityException, ExtrapolationException):
+                self.get_logger().debug(
+                    f'Waiting for transform {odom_frame}→{base_frame}'
+                )
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = PathPublisher()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    node = MultiPathPublisher()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

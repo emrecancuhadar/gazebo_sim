@@ -1,40 +1,24 @@
 <?xml version="1.0" ?>
-<!--
-  Try sending commands:
-    gz topic -t "/model/diff_drive/cmd_vel" -m gz.msgs.Twist -p "linear: {x: 1.0}, angular: {z: -0.1}"
-    ros2 topic pub /diff_drive/cmd_vel geometry_msgs/msg/Twist "{linear: {x: 5.0, y: 0.0, z: 0.0}, angular: {x: 0.0, y: 0.0, z: -0.1}}"
-  Listen to odometry:
-    gz topic -e -t /model/diff_drive/odometry
-    ros2 topic echo /model/diff_drive/odometry
--->
 <sdf version="1.8">
   <world name="demo">
-    <plugin
-      filename="gz-sim-physics-system"
-      name="gz::sim::systems::Physics">
-    </plugin>
-    <plugin
-      filename="gz-sim-sensors-system"
-      name="gz::sim::systems::Sensors">
+
+    <!-- ─── Core Systems ─────────────────────────────────────────── -->
+    <plugin filename="gz-sim-physics-system"
+            name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system"
+            name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
-    <plugin
-      filename="gz-sim-scene-broadcaster-system"
-      name="gz::sim::systems::SceneBroadcaster">
-    </plugin>
-    <plugin
-      filename="gz-sim-user-commands-system"
-      name="gz::sim::systems::UserCommands">
-    </plugin>
-    <plugin
-      filename="BasicSystem"
-      name="ros_gz_example_gazebo::BasicSystem">
-    </plugin>
-    <plugin
-      filename="FullSystem"
-      name="ros_gz_example_gazebo::FullSystem">
-    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system"
+            name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system"
+            name="gz::sim::systems::UserCommands"/>
+    <plugin filename="BasicSystem"
+            name="ros_gz_example_gazebo::BasicSystem"/>
+    <plugin filename="FullSystem"
+            name="ros_gz_example_gazebo::FullSystem"/>
 
+    <!-- ─── Sun Light ───────────────────────────────────────────── -->
     <light name="sun" type="directional">
       <cast_shadows>true</cast_shadows>
       <pose>0 0 10 0 0 0</pose>
@@ -49,41 +33,62 @@
       <direction>-0.5 0.1 -0.9</direction>
     </light>
 
-   
+    <!-- ─── Robot #1: diff_drive ─────────────────────────────────── -->
     <model name="diff_drive">
       <self_collide>true</self_collide>
       <pose>0 0 0.35 0 0 0</pose>
+
       <include merge="true">
         <uri>package://ros_gz_example_description/models/diff_drive</uri>
       </include>
 
-      <plugin
-        filename="gz-sim-joint-state-publisher-system"
-        name="gz::sim::systems::JointStatePublisher">
-      </plugin>
-
-      <plugin
-        filename="gz-sim-pose-publisher-system"
-        name="gz::sim::systems::PosePublisher">
+      <plugin filename="gz-sim-joint-state-publisher-system"
+              name="gz::sim::systems::JointStatePublisher"/>
+      <plugin filename="gz-sim-pose-publisher-system"
+              name="gz::sim::systems::PosePublisher">
         <publish_link_pose>true</publish_link_pose>
         <use_pose_vector_msg>true</use_pose_vector_msg>
         <static_publisher>true</static_publisher>
         <static_update_frequency>1</static_update_frequency>
       </plugin>
-
-      <plugin
-        filename="gz-sim-odometry-publisher-system"
-        name="gz::sim::systems::OdometryPublisher">
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
         <odom_frame>diff_drive/odom</odom_frame>
         <robot_base_frame>diff_drive</robot_base_frame>
         <odom_publish_frequency>100</odom_publish_frequency>
       </plugin>
     </model>
 
+    <!-- ─── Robot #2: diff_drive2 ────────────────────────────────── -->
+    <model name="diff_drive2">
+      <self_collide>true</self_collide>
+      <pose>1 0 0.35 0 0 0</pose>
+
+      <include merge="true">
+        <uri>package://ros_gz_example_description/models/diff_drive_red</uri>
+      </include>
+
+      <plugin filename="gz-sim-joint-state-publisher-system"
+              name="gz::sim::systems::JointStatePublisher"/>
+      <plugin filename="gz-sim-pose-publisher-system"
+              name="gz::sim::systems::PosePublisher">
+        <publish_link_pose>true</publish_link_pose>
+        <use_pose_vector_msg>true</use_pose_vector_msg>
+        <static_publisher>true</static_publisher>
+        <static_update_frequency>1</static_update_frequency>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>diff_drive2/odom</odom_frame>
+        <robot_base_frame>diff_drive2</robot_base_frame>
+        <odom_publish_frequency>100</odom_publish_frequency>
+      </plugin>
+    </model>
+
+    <!-- ─── Ground Plane ─────────────────────────────────────────── -->
     <include>
       <uri>package://ros_gz_example_description/models/my_ground_plane</uri>
     </include>
-
 
   </world>
 </sdf>
