@@ -16,14 +16,14 @@ class MultiPathPublisher(Node):
         self.tf_buffer   = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Which robots to track?
+        # Which robots to track? Add diff_drive3 here.
         self.robot_list = self.declare_parameter(
             'robot_list',
-            ['diff_drive', 'diff_drive2']
+            ['diff_drive', 'diff_drive2', 'diff_drive3']
         ).value
 
-        # Publishers, Path msgs & last positions
-        self.path_pubs         = {}    # <<-- renamed from publishers
+        # Publishers, path messages, last‐pos storage
+        self.path_pubs         = {}
         self.paths             = {}
         self.last_pos          = {}
         self.distance_threshold = self.declare_parameter(
@@ -33,17 +33,16 @@ class MultiPathPublisher(Node):
         for ns in self.robot_list:
             topic = f'/{ns}_path'
             pub = self.create_publisher(Path, topic, 10)
-
             path = Path()
             path.header.frame_id = f'{ns}/odom'
 
-            self.path_pubs[ns] = pub      # <<-- use path_pubs
+            self.path_pubs[ns] = pub
             self.paths[ns]     = path
             self.last_pos[ns]  = (None, None)
 
             self.get_logger().info(f'Publishing path for "{ns}" on "{topic}"')
 
-        # Timer to update both paths
+        # timer fires at 10 Hz
         self.create_timer(0.1, self.update_paths)
 
     def update_paths(self):
@@ -58,6 +57,7 @@ class MultiPathPublisher(Node):
                     odom_frame, base_frame, Time()
                 )
 
+                # build a stamped pose
                 pose = PoseStamped()
                 pose.header.stamp    = now_msg
                 pose.header.frame_id = odom_frame
@@ -66,7 +66,7 @@ class MultiPathPublisher(Node):
                 pose.pose.position.z = 0.0
                 pose.pose.orientation = trans.transform.rotation
 
-                # only record if moved enough
+                # skip points if robot hasn’t moved far enough
                 last_x, last_y = self.last_pos[ns]
                 if last_x is not None:
                     dx = pose.pose.position.x - last_x
@@ -79,13 +79,12 @@ class MultiPathPublisher(Node):
                 path = self.paths[ns]
                 path.poses.append(pose)
                 path.header.stamp = now_msg
-                self.path_pubs[ns].publish(path)   # <<-- use path_pubs
+                self.path_pubs[ns].publish(path)
 
             except (LookupException, ConnectivityException, ExtrapolationException):
                 self.get_logger().debug(
                     f'Waiting for transform {odom_frame}→{base_frame}'
                 )
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -95,7 +94,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

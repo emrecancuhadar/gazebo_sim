@@ -85,6 +85,31 @@
       </plugin>
     </model>
 
+    <model name="diff_drive3">
+      <self_collide>true</self_collide>
+      <pose>-1 0 0.35 0 0 0</pose>
+
+      <include merge="true">
+        <uri>package://ros_gz_example_description/models/diff_drive_blue</uri>
+      </include>
+
+      <plugin filename="gz-sim-joint-state-publisher-system"
+              name="gz::sim::systems::JointStatePublisher"/>
+      <plugin filename="gz-sim-pose-publisher-system"
+              name="gz::sim::systems::PosePublisher">
+        <publish_link_pose>true</publish_link_pose>
+        <use_pose_vector_msg>true</use_pose_vector_msg>
+        <static_publisher>true</static_publisher>
+        <static_update_frequency>1</static_update_frequency>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system"
+              name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>diff_drive3/odom</odom_frame>
+        <robot_base_frame>diff_drive3</robot_base_frame>
+        <odom_publish_frequency>100</odom_publish_frequency>
+      </plugin>
+    </model>
+
     <!-- ─── Ground Plane ─────────────────────────────────────────── -->
     <include>
       <uri>package://ros_gz_example_description/models/my_ground_plane</uri>

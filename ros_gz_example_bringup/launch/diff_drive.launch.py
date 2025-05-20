@@ -37,10 +37,16 @@ def generate_launch_description():
     with open(sdf_file, 'r') as infp:
         robot_desc = infp.read()
 
-    # 2) red‐tinted diff_drive2 (you should have created this folder & SDF)
+    # 2) red‐tinted diff_drive2
     red_sdf_file = os.path.join(pkg_description, 'models', 'diff_drive_red', 'model.sdf')
     with open(red_sdf_file, 'r') as infp:
         red_desc = infp.read()
+
+    # 3) blue‐tinted diff_drive3
+    blue_sdf_file = os.path.join(pkg_description,
+                             'models', 'diff_drive_blue', 'model.sdf')
+    with open(blue_sdf_file, 'r') as infp:
+        blue_desc = infp.read()
 
     # ─── Launch Gazebo-sim with the world ───────────────────────────────
     gz_sim = IncludeLaunchDescription(
@@ -94,6 +100,18 @@ def generate_launch_description():
         ],
     )
 
+    robot_state_publisher3 = Node(
+    package='robot_state_publisher',
+    executable='robot_state_publisher',
+    namespace='diff_drive3',
+    name='robot_state_publisher',
+    output='both',
+    parameters=[
+        {'use_sim_time': True},
+        {'robot_description': blue_desc},
+    ],
+)
+
     # ─── Static TFs: world → each robot’s odom ──────────────────────────
     static_tf1 = Node(
         package='tf2_ros',
@@ -117,6 +135,17 @@ def generate_launch_description():
             'diff_drive2/odom'
         ]
     )
+
+    static_tf3 = Node(
+    package='tf2_ros',
+    executable='static_transform_publisher',
+    name='static_world_to_diff_drive3',
+    arguments=[
+        '0','0','0','0','0','0','1',
+        'world',
+        'diff_drive3/odom'
+    ],
+)
 
     # ─── RViz for visualization ────────────────────────────────────────
     rviz = Node(
@@ -142,9 +171,11 @@ def generate_launch_description():
 
         robot_state_publisher1,
         robot_state_publisher2,
+        robot_state_publisher3,
 
         static_tf1,
         static_tf2,
+        static_tf3,
 
         rviz,
     ])

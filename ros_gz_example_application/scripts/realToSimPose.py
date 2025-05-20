@@ -20,13 +20,14 @@ class RealToSimPose(Node):
             rclpy.shutdown()
             return
 
-        # 2) Which real robots to listen to?
+        # 2) Which real‐to‐sim namespaces to bridge?
+        #    Now includes diff_drive, diff_drive2, diff_drive3
         self.robot_list = self.declare_parameter(
             'robot_list',
-            ['robot1', 'robot2']
+            ['diff_drive', 'diff_drive2', 'diff_drive3']
         ).value
 
-        # 3) Subscribe to each namespace's simlocalization topic
+        # 3) Subscribe to each <ns>/simlocalization
         for ns in self.robot_list:
             topic = f'{ns}/simlocalization'
             self.create_subscription(
@@ -38,16 +39,17 @@ class RealToSimPose(Node):
             self.get_logger().info(f'Subscribed to {topic}')
 
     def odom_callback(self, msg: Odometry, ns: str):
-        # Extract pose
+        # extract pose
         sim_pose = Pose()
         sim_pose.position = msg.pose.pose.position
         sim_pose.orientation = msg.pose.pose.orientation
 
-        # Build and send the service request
+        # build request
         req = SetEntityPose.Request()
-        # Model names in your SDF: "diff_drive" and "diff_drive2"
         req.entity = Entity(name=ns, type=Entity.MODEL)
         req.pose = sim_pose
+
+        # fire‐and‐forget
         self.cli.call_async(req)
 
         self.get_logger().info(
@@ -56,7 +58,6 @@ class RealToSimPose(Node):
             f'y={sim_pose.position.y:.2f}'
         )
 
-
 def main(args=None):
     rclpy.init(args=args)
     node = RealToSimPose()
@@ -64,7 +65,6 @@ def main(args=None):
         rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
