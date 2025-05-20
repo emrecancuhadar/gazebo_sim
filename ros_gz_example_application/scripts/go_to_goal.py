@@ -11,11 +11,32 @@ class GoToGoal(Node):
     def __init__(self):
         super().__init__('go_to_goal')
 
-        # Publishers / Subscribers
-        self.vel_pub  = self.create_publisher(Twist, "/diff_drive/cmd_vel", 10)
-        self.done_pub = self.create_publisher(String, "/fire_cell_done", 10)
-        self.create_subscription(Odometry, "/diff_drive/odometry",  self.odom_callback, 10)
-        self.create_subscription(Float32MultiArray, "/fire_cell_goal", self.goal_callback, 10)
+        # ─── grab our robot namespace (e.g. “diff_drive”, “diff_drive2”, etc) ─────
+        self.ns = self.declare_parameter('robot_ns', 'diff_drive').value
+
+        # Publishers / Subscribers all under that namespace
+        self.vel_pub  = self.create_publisher(
+            Twist,
+            f"/{self.ns}/cmd_vel",
+            10
+        )
+        self.done_pub = self.create_publisher(
+            String,
+            f"/{self.ns}/fire_cell_done",
+            10
+        )
+        self.create_subscription(
+            Odometry,
+            f"/{self.ns}/odometry",
+            self.odom_callback,
+            10
+        )
+        self.create_subscription(
+            Float32MultiArray,
+            f"/{self.ns}/fire_cell_goal",
+            self.goal_callback,
+            10
+        )
 
         # Robot state
         self.robot_position    = (0.0, 0.0)
@@ -39,6 +60,8 @@ class GoToGoal(Node):
         # Timer for navigate loop
         self.create_timer(0.1, self.navigate)
 
+        self.get_logger().info(f"[{self.ns}] go_to_goal ready")
+
     def odom_callback(self, msg: Odometry):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
@@ -52,34 +75,31 @@ class GoToGoal(Node):
         self.robot_orientation = yaw
 
     def goal_callback(self, msg: Float32MultiArray):
-        """Receive a new goal.  Preempt the active one if we’re driving."""
+        """Receive a new goal. Preempt if needed."""
         if len(msg.data) < 2:
             return
         new_goal = (msg.data[0], msg.data[1])
-        self.get_logger().info(f"Received goal: {new_goal}")
+        self.get_logger().info(f"[{self.ns}] Received goal: {new_goal}")
 
         if self.waiting_extinguish:
-            # during extinguish, queue up
             self.goal_queue.append(new_goal)
-            self.get_logger().info("→ Currently extinguishing; queued for later.")
+            self.get_logger().info(f"[{self.ns}] → extinguishing; queued.")
         elif self.goal_active:
-            # preempt current drive goal
             self.current_goal = new_goal
             self.aligned = False
-            self.get_logger().info(f"→ Preempting and switching to new goal {new_goal}")
+            self.get_logger().info(f"[{self.ns}] → Preempt → new goal {new_goal}")
         else:
-            # idle: just queue & start
             self.goal_queue.append(new_goal)
             self.next_goal()
 
     def next_goal(self):
-        """Pop a goal off the queue if we’re not extinguishing or already driving."""
+        """Start next queued goal if idle."""
         if not self.waiting_extinguish and not self.goal_active and self.goal_queue:
             self.current_goal = self.goal_queue.popleft()
             self.goal_active  = True
             self.aligned      = False
             x, y = self.current_goal
-            self.get_logger().info(f"New active goal: ({x:.2f}, {y:.2f})")
+            self.get_logger().info(f"[{self.ns}] New active goal: ({x:.2f},{y:.2f})")
 
     def navigate(self):
         if not self.goal_active or self.current_goal is None:
@@ -98,16 +118,13 @@ class GoToGoal(Node):
         # reached?
         if dist < 0.02:
             self.stop_robot()
-            self.get_logger().info(
-                f"Reached ({x_goal:.2f}, {y_goal:.2f}) → extinguishing 30 s"
-            )
+            self.get_logger().info(f"[{self.ns}] Reached → extinguishing 30 s")
             self.goal_active        = False
             self.waiting_extinguish = True
-            # start extinguish timer
             self.ext_timer = self.create_timer(30.0, self.extinguish_done)
             return
 
-        # otherwise: either rotate to align, or drive straight
+        # rotate vs drive
         twist = Twist()
         if not self.aligned:
             if abs(err) < self.align_tol:
@@ -126,7 +143,6 @@ class GoToGoal(Node):
         self.vel_pub.publish(twist)
 
     def extinguish_done(self):
-        # extinguish finishes: cancel timer, publish done, then start next
         self.ext_timer.cancel()
         self.waiting_extinguish = False
 
@@ -134,13 +150,13 @@ class GoToGoal(Node):
         done = String()
         done.data = f"{x:.2f},{y:.2f}"
         self.done_pub.publish(done)
-        self.get_logger().info(f"Extinguish done: ({x:.2f}, {y:.2f}); ready for next")
+        self.get_logger().info(f"[{self.ns}] Extinguish done → ready")
 
-        # kick off the next queued goal, if any
         self.next_goal()
 
     def stop_robot(self):
         self.vel_pub.publish(Twist())
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -148,6 +164,7 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

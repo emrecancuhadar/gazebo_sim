@@ -20,6 +20,9 @@ install(
     scripts/movingPoseClient.py
     scripts/realToSimPose.py
     scripts/spawner.py
+    scripts/multiGoToCell.py
+    scripts/initForestOnce.py
+    scripts/whitethreshold.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

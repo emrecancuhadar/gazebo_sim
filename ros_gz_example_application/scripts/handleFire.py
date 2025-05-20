@@ -15,6 +15,25 @@ class HandleFire(Node):
     def __init__(self):
         super().__init__('handle_fire')
 
+        # ─── Which robots to watch? ──────────────────────────────
+        self.robot_list = self.declare_parameter(
+            'robot_list',
+            ['diff_drive','diff_drive2','diff_drive3']
+        ).value
+        # map ns → last (x,y,row,col)
+        self.last_poses = {}
+
+        # subscribe to each robot’s odom
+        for ns in self.robot_list:
+            topic = f'/{ns}/odometry'
+            self.create_subscription(
+                Odometry,
+                topic,
+                lambda msg, ns=ns: self.odometry_callback(msg, ns),
+                10
+            )
+        self.get_logger().info(f'Subscribed to {topic}')
+
         # ─── Grid setup ─────────────────────────────────────────────────────
         self.grid_rows = 10
         self.grid_cols = 10
@@ -35,7 +54,6 @@ class HandleFire(Node):
         self.forest_info_sub = self.create_subscription(
             String, 'forest_info', self.forest_info_callback, 10
         )
-        self.create_subscription(Odometry, '/diff_drive/odometry', self.odometry_callback, 10)
 
         # ─── Internal State ─────────────────────────────────────────────────
         self.share_dir    = get_package_share_directory('ros_gz_example_description')
@@ -191,7 +209,7 @@ class HandleFire(Node):
 
 
     # ─── Odometry → cell mapping ─────────────────────────────────────────
-    def odometry_callback(self, msg: Odometry):
+    def odometry_callback(self, msg: Odometry, ns: str):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
@@ -200,7 +218,7 @@ class HandleFire(Node):
         row = max(0, min(self.grid_rows-1, row))
         col = max(0, min(self.grid_cols-1, col))
 
-        self._last_pose = (x, y, row, col)
+        self.last_poses[ns] = (x, y, row, col)
         cell = self.forest_info.get((row,col))
         if cell and       cell.get("cstate",0) > 0 \
             and  cell.get("state",  0) < 6:
@@ -217,10 +235,11 @@ class HandleFire(Node):
         self.get_logger().info(f"Elapsed {elapsed:.1f}s | Spawns: {self.spawn_count} | Deletes: {self.delete_count}")
 
     def log_robot_position(self):
-        if not self._last_pose:
-            return
-        x, y, r, c = self._last_pose
-        self.get_logger().info(f"Robot at x={x:.2f}, y={y:.2f} → cell ({r},{c})")
+        # print one line per robot
+        for ns, (x,y,r,c) in self.last_poses.items():
+            self.get_logger().info(
+                f'[{ns}] at x={x:.2f}, y={y:.2f} → cell ({r},{c})'
+            )
 
 
     # ─── Fire progression ────────────────────────────────────────────────
