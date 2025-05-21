@@ -21,7 +21,7 @@ install(
     scripts/realToSimPose.py
     scripts/spawner.py
     scripts/multiGoToCell.py
-    scripts/initForestOnce.py
+    scripts/cameraInitForest.py
     scripts/whitethreshold.py
   DESTINATION lib/${PROJECT_NAME}
 )

@@ -20,22 +20,7 @@ class InitForest(Node):
         self.offset_x = -((self.grid_cols - 1)*self.cell_size)/2.0
         self.offset_y = -((self.grid_rows - 1)*self.cell_size)/2.0
 
-        self.detected_balls = None
-
-        self.create_subscription(
-            Float32MultiArray,
-            '/grid/detected_balls',
-            self.balls_callback,
-            QoSProfile(depth=10)
-        )
-
-        timeout = time.time() + 5.0
-        while rclpy.ok() and self.detected_balls is None and time.time() < timeout:
-            rclpy.spin_once(self, timeout_sec=0.1)
-        if not self.detected_balls:
-            self.get_logger().error('InitForest: no /grid/detected_balls received, aborting.')
-            return
-
+        
         # Script paths
         self.intensity_script = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
         self.season_script    = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
@@ -93,7 +78,9 @@ class InitForest(Node):
         centers = [
             (2, 2, 2),
             (2, 7, 2),
-            (7, 7, 2)
+            (7, 7, 2),
+            (0, 0, 2),
+            (9, 9, 2)
         ]
         spawn_map = {}
         n_states = 5
