@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import rclpy
+import math
 from rclpy.node import Node
 from std_msgs.msg import String, Float32MultiArray
 from nav_msgs.msg import Odometry
@@ -224,9 +225,24 @@ class HandleFire(Node):
             and  cell.get("state",  0) < 6:
             cx = self.offset_x + col*self.cell_size
             cy = self.offset_y + (self.grid_rows-1-row)*self.cell_size
-            if ((x-cx)**2 + (y-cy)**2)**0.5 <= 0.05 and (row,col) not in self.paused_cells:
-                self.paused_cells[(row,col)] = time.time()
-                self.get_logger().info(f"Paused cell {(row,col)} at t={self.paused_cells[(row,col)]:.1f}")
+            dist = math.hypot(x - cx, y - cy)
+            tol = self.cell_size * 0.1
+            if dist <= tol:
+                key = (row, col)
+                now = time.time()
+                if key not in self.paused_cells:
+                    # first robot arrives
+                    self.paused_cells[key] = {
+                        'start_time': now,
+                        'robots':     {ns}
+                    }
+                else:
+                    # add this robot once
+                    self.paused_cells[key]['robots'].add(ns)
+
+                st    = self.paused_cells[key]['start_time']
+                count = len(self.paused_cells[key]['robots'])
+
 
 
     # ─── Timed Utilities ──────────────────────────────────────────────────
@@ -257,18 +273,27 @@ class HandleFire(Node):
             if state == 6:
                 continue
 
-            # paused by robot?
+            # paused (extinguishing) by robot(s)?
             if key in self.paused_cells:
-                start = self.paused_cells[key]
-                # still within 30s: skip burning/progression
-                if now < start + 30.0:
+                info      = self.paused_cells[key]
+                start     = info['start_time']
+                count     = len(info['robots'])
+                base_time = 30.0
+                # more robots ⇒ faster extinguish
+                threshold = base_time / max(count, 1)
+
+                if now < start + threshold:
+                    # still waiting for this cell to finish
                     continue
-                # 30s elapsed → extinguish permanently
+
+                # time’s up!
                 del self.paused_cells[key]
                 cell["cstate"] = -1
-                self.get_logger().info(f"30 s done for {key}; forcing state 6")
+                self.get_logger().info(
+                    f"{threshold:.1f}s done for {key} with {count} robot(s); forcing state 6"
+                )
                 self.update_cell(key, force_state=6)
-                # immediately push out the zeroed grid so clients see it
+                # push update immediately
                 self.publish_forest_info()
                 self.publish_grid_data()
                 continue

@@ -51,6 +51,7 @@ class FireCellGoalClient(Node):
         self.poses      = {ns: (0.0, 0.0) for ns in self.robot_list}
         self.ready      = {ns: True        for ns in self.robot_list}
         self.blacklists = {ns: set()       for ns in self.robot_list}
+        self.pending_extinguish = {}
 
         # per-robot publishers & subscriptions
         self.goal_pubs = {}
@@ -104,8 +105,6 @@ class FireCellGoalClient(Node):
         self.slope_data      = None
         self.aspect_data     = None
 
-        self.last_update_time = 0.0
-        self.update_interval  = 1.0
         self.prev_best_center = {ns: None for ns in self.robot_list}
 
         # ─── Parameters for grid dims & cell centers ────────────────────
@@ -121,6 +120,14 @@ class FireCellGoalClient(Node):
         xg, yg = np.meshgrid(xs, ys)
         self.x_grid = xg - self.platform_width/2.0
         self.y_grid = self.platform_height/2.0 - yg
+
+        offset_mag = min(cell_w, cell_h) * 0.04
+        self.goal_offsets = {}
+        for idx, ns in enumerate(self.robot_list):
+            angle = 2 * 3.14 * idx / len(self.robot_list)
+            dx = offset_mag * math.cos(angle)
+            dy = offset_mag * math.sin(angle)
+            self.goal_offsets[ns] = (dx, dy)
         
         # Extra cell parameters (randomized for each cell // max and min values manually set):
         #  - wind_speed in ft/min (0.0 to 9842.52) according to Brauford scale.
@@ -197,11 +204,35 @@ class FireCellGoalClient(Node):
     # ─── Grid callbacks ───────────────────────────────────────────────
     def fire_count_callback(self, msg):
         self.grid_data = msg.data
-        self.maybe_dispatch()
+        # wait until we have *all* six data sets before planning
+        if None in (
+            self.grid_data,
+            self.fuel_load_data,
+            self.vegetation_data,
+            self.elevation_data,
+            self.slope_data,
+            self.aspect_data
+        ):
+            return
 
+        # first, check for any robot that is “pending extinguish”:
+        for ns, (r, c) in list(self.pending_extinguish.items()):
+            idx = r * self.grid_cols + c
+            # fire_count publishes 0.0 for state 6 or 7
+            if self.grid_data[idx] == 0.0:
+                # now truly extinguished → free & dispatch
+                self.ready[ns] = True
+                del self.pending_extinguish[ns]
+                self.get_logger().info(f"[{ns}] confirmed extinguished in grid → new goal")
+                self.process_grid_and_send_goal(ns)
+
+        # then any other totally-free robot (initial startup, etc)
+        for ns in self.robot_list:
+            if self.ready[ns] and ns not in self.pending_extinguish:
+                self.process_grid_and_send_goal(ns)
+                
     def fuel_load_callback(self, msg):
         self.fuel_load_data = msg.data
-        self.maybe_dispatch()
 
     def vegetation_callback(self, msg):
         try:
@@ -209,36 +240,16 @@ class FireCellGoalClient(Node):
         except json.JSONDecodeError as e:
             self.get_logger().error(f"veg JSON parse failed: {e}")
             return
-        self.maybe_dispatch()
 
     def elevation_callback(self, msg):
         self.elevation_data = msg.data
-        self.maybe_dispatch()
 
     def slope_callback(self, msg):
         self.slope_data = msg.data
-        self.maybe_dispatch()
 
     def aspect_callback(self, msg):
         self.aspect_data = msg.data
-        self.maybe_dispatch()
 
-    # ─── Throttle & dispatch per-robot ─────────────────────────────────
-    def maybe_dispatch(self):
-        if None in (
-            self.grid_data, self.fuel_load_data, self.vegetation_data,
-            self.elevation_data, self.slope_data, self.aspect_data
-        ):
-            return
-
-        now = time.time()
-        if now - self.last_update_time < self.update_interval:
-            return
-        self.last_update_time = now
-
-        for ns in self.robot_list:
-            if self.ready[ns]:
-                self.process_grid_and_send_goal(ns)
 
     # ─── Compute & send one goal for robot `ns` ────────────────────────
     def process_grid_and_send_goal(self, ns):
@@ -389,7 +400,15 @@ class FireCellGoalClient(Node):
         sc = np.where(mask, score, -np.inf)
         best = int(np.argmax(sc))
         br, bc = np.unravel_index(best, sc.shape)
-        new_goal = float(self.x_grid[br,bc]), float(self.y_grid[br,bc])
+
+        base_x = float(self.x_grid[br, bc])
+        base_y = float(self.y_grid[br, bc])
+        dx, dy = self.goal_offsets.get(ns, (0.0, 0.0))
+
+        goal_x = base_x + dx
+        goal_y = base_y + dy
+
+        new_goal = [goal_x, goal_y]
 
         best_cell = {
             'center':             new_goal,
@@ -457,7 +476,7 @@ class FireCellGoalClient(Node):
 
         self.blacklists[ns].add((r,c))
         self.get_logger().info(f"[{ns}] Extinguish done → blacklisted {(r,c)}")
-        self.ready[ns] = True
+        self.pending_extinguish[ns] = (r, c)
 
     # ─── Helpers ─────────────────────────────────────────────────────
     def get_wind_vector(self, wdir):

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import rclpy, math
-from collections import deque
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from std_msgs.msg import Float32MultiArray, String
@@ -42,12 +41,10 @@ class GoToGoal(Node):
         self.robot_position    = (0.0, 0.0)
         self.robot_orientation = 0.0
 
-        # Goal queue and flags
-        self.goal_queue         = deque()
-        self.current_goal       = None
-        self.goal_active        = False
-        self.waiting_extinguish = False
-        self.aligned            = False
+        # Current goal state
+        self.current_goal = None
+        self.goal_active  = False
+        self.aligned      = False
 
         # Control parameters
         self.max_linear_speed  = 0.5
@@ -81,25 +78,11 @@ class GoToGoal(Node):
         new_goal = (msg.data[0], msg.data[1])
         self.get_logger().info(f"[{self.ns}] Received goal: {new_goal}")
 
-        if self.waiting_extinguish:
-            self.goal_queue.append(new_goal)
-            self.get_logger().info(f"[{self.ns}] → extinguishing; queued.")
-        elif self.goal_active:
-            self.current_goal = new_goal
-            self.aligned = False
-            self.get_logger().info(f"[{self.ns}] → Preempt → new goal {new_goal}")
-        else:
-            self.goal_queue.append(new_goal)
-            self.next_goal()
-
-    def next_goal(self):
-        """Start next queued goal if idle."""
-        if not self.waiting_extinguish and not self.goal_active and self.goal_queue:
-            self.current_goal = self.goal_queue.popleft()
-            self.goal_active  = True
-            self.aligned      = False
-            x, y = self.current_goal
-            self.get_logger().info(f"[{self.ns}] New active goal: ({x:.2f},{y:.2f})")
+        # immediately (re-)start navigating toward the new goal
+        self.current_goal = new_goal
+        self.goal_active  = True
+        self.aligned      = False
+        self.get_logger().info(f"[{self.ns}] → New goal → {new_goal}")
 
     def navigate(self):
         if not self.goal_active or self.current_goal is None:
@@ -117,11 +100,17 @@ class GoToGoal(Node):
 
         # reached?
         if dist < 0.02:
+            # stop and notify immediately
             self.stop_robot()
-            self.get_logger().info(f"[{self.ns}] Reached → extinguishing 30 s")
-            self.goal_active        = False
-            self.waiting_extinguish = True
-            self.ext_timer = self.create_timer(30.0, self.extinguish_done)
+            x, y = self.current_goal
+            done = String()
+            done.data = f"{x:.2f},{y:.2f}"
+            self.done_pub.publish(done)
+            self.get_logger().info(f"[{self.ns}] Reached → stopping (awaiting next goal)")
+
+            # clear current goal
+            self.goal_active  = False
+            self.current_goal = None
             return
 
         # rotate vs drive
@@ -141,18 +130,6 @@ class GoToGoal(Node):
                 twist.linear.x = min(self.max_linear_speed, lin)
 
         self.vel_pub.publish(twist)
-
-    def extinguish_done(self):
-        self.ext_timer.cancel()
-        self.waiting_extinguish = False
-
-        x, y = self.current_goal
-        done = String()
-        done.data = f"{x:.2f},{y:.2f}"
-        self.done_pub.publish(done)
-        self.get_logger().info(f"[{self.ns}] Extinguish done → ready")
-
-        self.next_goal()
 
     def stop_robot(self):
         self.vel_pub.publish(Twist())

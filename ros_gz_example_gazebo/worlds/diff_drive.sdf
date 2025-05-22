@@ -62,7 +62,7 @@
     <!-- ─── Robot #2: diff_drive2 ────────────────────────────────── -->
     <model name="diff_drive2">
       <self_collide>true</self_collide>
-      <pose>10 0 0.35 0 0 0</pose>
+      <pose>1 0 0.35 0 0 0</pose>
 
       <include merge="true">
         <uri>package://ros_gz_example_description/models/diff_drive_red</uri>
@@ -87,7 +87,7 @@
 
     <model name="diff_drive3">
       <self_collide>true</self_collide>
-      <pose>-10 0 0.35 0 0 0</pose>
+      <pose>-1 0 0.35 0 0 0</pose>
 
       <include merge="true">
         <uri>package://ros_gz_example_description/models/diff_drive_blue</uri>
