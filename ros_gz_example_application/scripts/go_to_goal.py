@@ -2,138 +2,139 @@
 import rclpy, math
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float32MultiArray, String
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32MultiArray, String
 from tf_transformations import euler_from_quaternion
 
 class GoToGoal(Node):
     def __init__(self):
         super().__init__('go_to_goal')
-
-        # ─── grab our robot namespace (e.g. “diff_drive”, “diff_drive2”, etc) ─────
         self.ns = self.declare_parameter('robot_ns', 'diff_drive').value
 
-        # Publishers / Subscribers all under that namespace
-        self.vel_pub  = self.create_publisher(
-            Twist,
-            f"/{self.ns}/cmd_vel",
-            10
-        )
-        self.done_pub = self.create_publisher(
-            String,
-            f"/{self.ns}/fire_cell_done",
-            10
-        )
-        self.create_subscription(
-            Odometry,
-            f"/{self.ns}/odometry",
-            self.odom_callback,
-            10
-        )
-        self.create_subscription(
-            Float32MultiArray,
-            f"/{self.ns}/fire_cell_goal",
-            self.goal_callback,
-            10
-        )
+        # publishers & subscribers
+        self.vel_pub = self.create_publisher(Twist, f'/{self.ns}/cmd_vel', 10)
+        self.done_pub = self.create_publisher(String, f'/{self.ns}/fire_cell_done', 10)
+        self.create_subscription(Odometry, f'/{self.ns}/odometry', self.odom_cb, 10)
+        self.create_subscription(Float32MultiArray, f'/{self.ns}/fire_cell_goal', self.goal_cb, 10)
 
-        # Robot state
-        self.robot_position    = (0.0, 0.0)
-        self.robot_orientation = 0.0
+        # track peers for repulsion
+        self.robot_list = self.declare_parameter(
+            'robot_list',
+            ['diff_drive','diff_drive2','diff_drive3']
+        ).value
+        self.peer_positions = {
+            peer: None for peer in self.robot_list if peer != self.ns
+        }
+        for peer in self.peer_positions:
+            self.create_subscription(
+                Odometry,
+                f'/{peer}/odometry',
+                lambda msg, peer=peer: self.peer_odom_cb(msg, peer),
+                10
+            )
 
-        # Current goal state
-        self.current_goal = None
-        self.goal_active  = False
-        self.aligned      = False
+        # state
+        self.robot_x = self.robot_y = self.robot_yaw = 0.0
+        self.goal       = None
+        self.goal_active = False
 
-        # Control parameters
-        self.max_linear_speed  = 0.5
-        self.max_angular_speed = 0.1
-        self.lin_gain          = 0.6
-        self.ang_gain          = 0.5
-        self.align_tol         = 0.05
-        self.unalign_tol       = 0.15
+        # gains & thresholds  
+        self.k_att      = 1.0    # attractive gain
+        self.k_repulse  = 1.5    # repulsive gain
+        self.safe_radius = 0.2   # m, start repelling inside this
+        self.max_lin    = 0.5
+        self.max_ang    = 1.0
+        self.dist_tol   = 0.05
+        self.yaw_tol    = 0.05
 
-        # Timer for navigate loop
         self.create_timer(0.1, self.navigate)
+        self.get_logger().info(f"[{self.ns}] go_to_goal (potential field) ready")
 
-        self.get_logger().info(f"[{self.ns}] go_to_goal ready")
-
-    def odom_callback(self, msg: Odometry):
-        x = msg.pose.pose.position.x
-        y = msg.pose.pose.position.y
-        self.robot_position = (x, y)
-        _, _, yaw = euler_from_quaternion([
+    def odom_cb(self, msg):
+        self.robot_x = msg.pose.pose.position.x
+        self.robot_y = msg.pose.pose.position.y
+        _,_,self.robot_yaw = euler_from_quaternion([
             msg.pose.pose.orientation.x,
             msg.pose.pose.orientation.y,
             msg.pose.pose.orientation.z,
             msg.pose.pose.orientation.w
         ])
-        self.robot_orientation = yaw
 
-    def goal_callback(self, msg: Float32MultiArray):
-        """Receive a new goal. Preempt if needed."""
-        if len(msg.data) < 2:
-            return
-        new_goal = (msg.data[0], msg.data[1])
-        self.get_logger().info(f"[{self.ns}] Received goal: {new_goal}")
-
-        # immediately (re-)start navigating toward the new goal
-        self.current_goal = new_goal
-        self.goal_active  = True
-        self.aligned      = False
-        self.get_logger().info(f"[{self.ns}] → New goal → {new_goal}")
-
-    def navigate(self):
-        if not self.goal_active or self.current_goal is None:
-            return
-
-        x_goal, y_goal = self.current_goal
-        x, y           = self.robot_position
-        dx, dy         = x_goal - x, y_goal - y
-        dist           = math.hypot(dx, dy)
-        target_theta   = math.atan2(dy, dx)
-        err = math.atan2(
-            math.sin(target_theta - self.robot_orientation),
-            math.cos(target_theta - self.robot_orientation)
+    def peer_odom_cb(self, msg, peer):
+        self.peer_positions[peer] = (
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y
         )
 
-        # reached?
-        if dist < 0.02:
-            # stop and notify immediately
-            self.stop_robot()
-            x, y = self.current_goal
-            done = String()
-            done.data = f"{x:.2f},{y:.2f}"
-            self.done_pub.publish(done)
-            self.get_logger().info(f"[{self.ns}] Reached → stopping (awaiting next goal)")
+    def goal_cb(self, msg):
+        if len(msg.data) < 2:
+            return
+        self.goal = (msg.data[0], msg.data[1])
+        self.goal_active = True
+        self.get_logger().info(f"[{self.ns}] New goal → {self.goal}")
 
-            # clear current goal
-            self.goal_active  = False
-            self.current_goal = None
+    def navigate(self):
+        if not self.goal_active or self.goal is None:
             return
 
-        # rotate vs drive
-        twist = Twist()
-        if not self.aligned:
-            if abs(err) < self.align_tol:
-                self.aligned = True
-            else:
-                ang = self.ang_gain * err
-                twist.angular.z = max(-self.max_angular_speed,
-                                      min(self.max_angular_speed, ang))
+        gx, gy = self.goal
+        dx, dy = gx - self.robot_x, gy - self.robot_y
+        rho   = math.hypot(dx, dy)
+
+        # attractive force (world frame)
+        if rho > self.dist_tol:
+            f_ax = self.k_att * dx
+            f_ay = self.k_att * dy
         else:
-            if abs(err) > self.unalign_tol:
-                self.aligned = False
-            else:
-                lin = self.lin_gain * dist
-                twist.linear.x = min(self.max_linear_speed, lin)
+            # reached goal
+            self.stop()
+            done = String(); done.data = f"{gx:.2f},{gy:.2f}"
+            self.done_pub.publish(done)
+            self.get_logger().info(f"[{self.ns}] Goal reached")
+            self.goal_active = False
+            return
+
+        # repulsive force from each peer
+        f_rx, f_ry = 0.0, 0.0
+        for pos in self.peer_positions.values():
+            if pos is None:
+                continue
+            px, py = pos
+            dxp = self.robot_x - px
+            dyp = self.robot_y - py
+            dist_p = math.hypot(dxp, dyp)
+            if dist_p < 1e-6:
+                continue
+            if dist_p < self.safe_radius:
+                # simple 1/r^2 style repulsion
+                mag = self.k_repulse * (1.0/dist_p - 1.0/self.safe_radius) / (dist_p**2)
+                f_rx += mag * (dxp/dist_p)
+                f_ry += mag * (dyp/dist_p)
+
+        # total force in world frame
+        fx = f_ax + f_rx
+        fy = f_ay + f_ry
+
+        # convert to desired heading & speed
+        desired_yaw = math.atan2(fy, fx)
+        yaw_err     = math.atan2(
+            math.sin(desired_yaw - self.robot_yaw),
+            math.cos(desired_yaw - self.robot_yaw)
+        )
+        # magnitude of force vector as forward speed
+        f_mag = math.hypot(fx, fy)
+
+        twist = Twist()
+        # if heading error large, rotate first
+        if abs(yaw_err) > self.yaw_tol:
+            twist.angular.z = max(-self.max_ang, min(self.max_ang, yaw_err))
+        else:
+            twist.linear.x = max(-self.max_lin, min(self.max_lin, self.k_att * f_mag))
 
         self.vel_pub.publish(twist)
 
-    def stop_robot(self):
+    def stop(self):
         self.vel_pub.publish(Twist())
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -141,7 +142,6 @@ def main(args=None):
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()

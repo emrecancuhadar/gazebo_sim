@@ -279,8 +279,8 @@ class HandleFire(Node):
                 start     = info['start_time']
                 count     = len(info['robots'])
                 base_time = 30.0
-                # more robots ⇒ faster extinguish
-                threshold = base_time / max(count, 1)
+                # diminishing‐returns: divide by sqrt(count)
+                threshold = base_time / math.sqrt(max(count,1))
 
                 if now < start + threshold:
                     # still waiting for this cell to finish
