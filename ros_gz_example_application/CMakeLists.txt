@@ -3,6 +3,7 @@ project(ros_gz_example_application)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclpy REQUIRED)
+find_package(amaterasu_interfaces REQUIRED)
 
 install(
   PROGRAMS
@@ -23,6 +24,10 @@ install(
     scripts/multiGoToCell.py
     scripts/cameraInitForest.py
     scripts/whitethreshold.py
+    scripts/deneme.py
+    scripts/mememe.py
+    scripts/fire_weather_index.py
+    scripts/rothermelmodel.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

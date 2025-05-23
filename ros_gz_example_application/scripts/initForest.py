@@ -76,11 +76,7 @@ class InitForest(Node):
 
         # 4) DATA‐DRIVEN SPAWNS
         centers = [
-            (2, 2, 2),
-            (2, 7, 2),
-            (7, 7, 2),
-            (0, 0, 2),
-            (9, 9, 2)
+            (1, 1, 1)
         ]
         spawn_map = {}
         n_states = 5
