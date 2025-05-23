@@ -71,8 +71,8 @@ class HandleFire(Node):
         self._max_retries = 3
 
         # ─── Wind Model Direction ──────────────────────────────────────────
-        self.wind_dx = 1
-        self.wind_dy = 1
+        self.wind_dx = -1
+        self.wind_dy = 0
 
         # ─── Service Clients ───────────────────────────────────────────────
         self.spawn_cli  = self.create_client(SpawnEntity, '/world/demo/create')

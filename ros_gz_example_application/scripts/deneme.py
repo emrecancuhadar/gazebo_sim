@@ -46,9 +46,9 @@ class FireCellGoalClient(Node):
         # ─── Robot list & per-robot state ─────────────────────────────────
         self.robot_list = self.declare_parameter(
             'robot_list',
-            ['diff_drive','diff_drive2','diff_drive3']
+            ['diff_drive']
         ).value
-
+        
         self.poses      = {ns: (0.0, 0.0) for ns in self.robot_list}
         self.ready      = {ns: True        for ns in self.robot_list}
         self.blacklists = {ns: set()       for ns in self.robot_list}
@@ -144,7 +144,7 @@ class FireCellGoalClient(Node):
         self.precipitation_threshold = self.declare_parameter("precipitation_threshold", 1000.0).value
         self.temperature_celsius     = self.declare_parameter("temperature", 25.0).value
         self.temperature_threshold   = self.declare_parameter("temperature_threshold", 30.0).value
-        self.wind_direction_param    = self.declare_parameter("wind_direction", "E").value
+        self.wind_direction_param    = self.declare_parameter("wind_direction", "W").value
 
         # Global vegetation multipliers based on your image processor classes.
         self.vegetation_factors = {
@@ -216,6 +216,7 @@ class FireCellGoalClient(Node):
         ):
             return
 
+
         # first, check for any robot that is “pending extinguish”:
         for ns, (r, c) in list(self.pending_extinguish.items()):
             idx = r * self.grid_cols + c
@@ -230,6 +231,7 @@ class FireCellGoalClient(Node):
         # then any other totally-free robot (initial startup, etc)
         for ns in self.robot_list:
             if self.ready[ns] and ns not in self.pending_extinguish:
+                self.get_logger().info(f"4")
                 self.process_grid_and_send_goal(ns)
                 
     def fuel_load_callback(self, msg):
@@ -364,7 +366,7 @@ class FireCellGoalClient(Node):
         )
 
         # --- Topographic risk factors ---
-        min_e, max_e         = elev.min(), elev.max()
+        min_e, max_e         = elev.min(), elev.max() 
         norm_elev_risk       = 1.0 - (elev - min_e) / (max_e - min_e + eps)
         slope_factor         = phi_s
         aspect_rad           = np.deg2rad(aspect - 180.0)
@@ -406,6 +408,8 @@ class FireCellGoalClient(Node):
         goal_x = base_x + dx
         goal_y = base_y + dy
 
+        self.get_logger().info(f"[{ns}] Sending goal → x: {goal_x:.2f}, y: {goal_y:.2f}")
+
         new_goal = [goal_x, goal_y]
 
         best_cell = {
@@ -435,14 +439,12 @@ class FireCellGoalClient(Node):
 
         # send goal via ActionClient
         self.ready[ns] = False
-        goal_msg = GoToGoal.Goal()
-        goal_msg.x = goal_x
-        goal_msg.y = goal_y
-        send_goal = self.action_clients[ns].send_goal_async(
+        goal_msg = GoToGoal.Goal(x=goal_x, y=goal_y)
+        send_goal_future = self.action_clients[ns].send_goal_async(
             goal_msg,
             feedback_callback=lambda fb, ns=ns: self._fb(ns, fb))
-        send_goal.add_done_callback(
-            lambda fut, ns=ns: self._on_result(ns, fut))
+        send_goal_future.add_done_callback(
+            lambda future, ns=ns: self._on_goal_response(future, ns))
 
     # ─── Feedback handler ─────────────────────────────────────────────
     def _fb(self, ns, feedback_msg):
@@ -457,6 +459,21 @@ class FireCellGoalClient(Node):
         else:
             self.get_logger().warn(f"[{ns}] failed to reach goal")
         # still wait for /fire_cell_done to mark ready again
+
+    def _on_goal_response(self, future, ns):
+        # future.result() is your ClientGoalHandle
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn(f"[{ns}] Goal was rejected by the server")
+            # re-allow planning if you want:
+            self.ready[ns] = True
+            return
+
+        # now request the real result
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(
+            lambda fut, ns=ns: self._on_result(ns, fut))
+    
 
     # ─── Done (extinguish) callback ───────────────────────────────────
     def done_callback(self, msg, ns):
