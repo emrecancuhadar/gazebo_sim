@@ -6,6 +6,7 @@ from nav_msgs.msg import Odometry
 from ros_gz_interfaces.srv import SetEntityPose
 from ros_gz_interfaces.msg import Entity
 from geometry_msgs.msg import Pose
+import time
 
 class RealToSimPose(Node):
     def __init__(self):
@@ -26,6 +27,8 @@ class RealToSimPose(Node):
             'robot_list',
             ['diff_drive', 'diff_drive2', 'diff_drive3']
         ).value
+
+        self._last_log = { ns: 0.0 for ns in self.robot_list }
 
         # 3) Subscribe to each <ns>/simlocalization
         for ns in self.robot_list:
@@ -52,11 +55,14 @@ class RealToSimPose(Node):
         # fire‐and‐forget
         self.cli.call_async(req)
 
-        self.get_logger().info(
-            f'[{ns}] Bridged real → sim: '
-            f'x={sim_pose.position.x:.2f}, '
-            f'y={sim_pose.position.y:.2f}'
-        )
+        now = time.time()
+        if now - self._last_log[ns] >= 1.0:
+            self._last_log[ns] = now
+            self.get_logger().info(
+                f'[{ns}] Bridged real → sim: '
+                f'x={sim_pose.position.x:.2f}, '
+                f'y={sim_pose.position.y:.2f}'
+            )
 
 def main(args=None):
     rclpy.init(args=args)

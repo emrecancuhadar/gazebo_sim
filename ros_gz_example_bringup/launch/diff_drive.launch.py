@@ -48,6 +48,13 @@ def generate_launch_description():
     with open(blue_sdf_file, 'r') as infp:
         blue_desc = infp.read()
 
+    declare_debug_env = DeclareLaunchArgument(
+    'debug_env',
+    default_value='false',
+    description='Enable debug environment (true/false)'
+    )
+    debug_env = LaunchConfiguration('debug_env')
+
     # ─── Launch Gazebo-sim with the world ───────────────────────────────
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -58,7 +65,8 @@ def generate_launch_description():
                 pkg_gazebo,
                 'worlds',
                 'diff_drive.sdf'
-            ])
+            ]),
+            'debug': debug_env,
         }.items(),
     )
 
@@ -165,6 +173,8 @@ def generate_launch_description():
             'rviz', default_value='true',
             description='Whether to launch RViz'
         ),
+
+        declare_debug_env,
 
         gz_sim,
         bridge,

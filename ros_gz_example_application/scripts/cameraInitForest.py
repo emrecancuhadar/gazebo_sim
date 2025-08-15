@@ -33,8 +33,8 @@ class InitForestOnce(Node):
 
         # Script & data paths
         pkg_share = get_package_share_directory('ros_gz_example_description')
-        self.intensity_script = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
-        self.season_script    = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
+        self.intensity_script = "/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
+        self.season_script    = "/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
         self.winter_img       = os.path.join(pkg_share, 'models', 'my_ground_plane', 'materials', 'textures', '14ocak2024normalview.jpg')
         self.summer_red       = os.path.join(pkg_share, 'models', 'my_ground_plane', 'materials', 'textures', 'summer_red.tiff')
         self.summer_nir       = os.path.join(pkg_share, 'models', 'my_ground_plane', 'materials', 'textures', 'summer_nir.tiff')
@@ -54,7 +54,7 @@ class InitForestOnce(Node):
         self.get_logger().info('Waiting for /grid/detected_balls message...')
 
         # Spin until data arrives or timeout
-        timeout = time.time() + 5.0
+        timeout = time.time() + 15.0
         while rclpy.ok() and self.detected_balls is None and time.time() < timeout:
             rclpy.spin_once(self, timeout_sec=0.1)
         if self.detected_balls is None:
@@ -87,24 +87,22 @@ class InitForestOnce(Node):
 
         # Spawn cells (centers + neighbors)
         spawn_map = {}
-        max_model_state = 5  # models 0-5 (0 healthy, 1-5 fires)
-        for i, j, v in centers:
-            # map detected value to discrete model state
-            st = min(v, max_model_state)
-            # compute continuous state count
-            if st == 0:
-                cs = 0
-            else:
-                m = self.forest_info[(i, j)]['max_fire']
-                cs = int((m * 200 / max_model_state) * (st - 1) + 1)
-            spawn_map[(i, j)] = (st, cs)
-            # include neighbors
+        n_states = 5
+        for i, j, fv in centers:
+            cell   = self.forest_info[(i, j)]
+            m      = cell['max_fire']
+            c_max  = m * 200
+            interval = c_max / n_states
+            cs     = int(interval * (fv - 1) + 1)
+            spawn_map[(i, j)] = (fv, cs)
+        for i, j, _ in centers:
             for di in (-1, 0, 1):
                 for dj in (-1, 0, 1):
                     ni, nj = i + di, j + dj
-                    if (ni, nj) == (i, j):
-                        continue
-                    if 0 <= ni < self.grid_rows and 0 <= nj < self.grid_cols:
+                    if (ni, nj) == (i, j): continue
+                    if not (0 <= ni < self.grid_rows and 0 <= nj < self.grid_cols): continue
+                    nbr = self.forest_info[(ni, nj)]
+                    if nbr['cstate'] == 0:
                         spawn_map.setdefault((ni, nj), (0, 0))
 
         # Spawn and publish
@@ -116,12 +114,21 @@ class InitForestOnce(Node):
     def _balls_callback(self, msg: Float32MultiArray):
         lst = []
         for idx, w in enumerate(msg.data):
-            if w <= 0:
+            # half-up rounding:
+            rounded = int(w + 0.5)       # 0.4→0, 0.5→1, 0.6→1, 1.4→1, 1.5→2, etc.
+            # clamp anything below 1 to zero
+            count = rounded if rounded >= 1 else 0
+
+            # skip zero entries
+            if count == 0:
                 continue
+
             row = idx // self.grid_cols
             col = idx % self.grid_cols
-            lst.append((row, col, int(w)))
+            lst.append((row, col, count))
+
         self.detected_balls = lst
+
 
     def _call_script(self, cmd, name):
         try:

@@ -31,7 +31,7 @@ class Spawner(Node):
         spawn_req.entity_factory = EntityFactory(
             name=self.entity_name,
             allow_renaming=False,
-            sdf_filename='/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/forest_1_ball/forest_1_ball_state_0/model.sdf',
+            sdf_filename='/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/forest_1_ball/forest_1_ball_state_0/model.sdf',
             pose=Pose(),
             relative_to='world'
         )

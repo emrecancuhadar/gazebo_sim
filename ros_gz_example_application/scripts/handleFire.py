@@ -8,6 +8,8 @@ from geometry_msgs.msg import Pose
 from ros_gz_interfaces.srv import SpawnEntity, DeleteEntity
 from ros_gz_interfaces.msg import EntityFactory, Entity
 from ament_index_python.packages import get_package_share_directory
+from std_msgs.msg import Int32MultiArray
+
 
 import json, time, os
 from collections import deque
@@ -23,6 +25,9 @@ class HandleFire(Node):
         ).value
         # map ns → last (x,y,row,col)
         self.last_poses = {}
+        self.robot_cells = {}
+        self.robot_goal_cells = { ns: None for ns in self.robot_list }
+        self.wait_speed_thresh = 0.05
 
         # subscribe to each robot’s odom
         for ns in self.robot_list:
@@ -32,6 +37,18 @@ class HandleFire(Node):
                 topic,
                 lambda msg, ns=ns: self.odometry_callback(msg, ns),
                 10
+            )
+            self.create_subscription(
+                Int32MultiArray,
+                f'/{ns}/goal_cell',
+                lambda msg, ns=ns: self.goal_cell_callback(msg, ns),
+                10
+            )
+            self.create_subscription(
+            Int32MultiArray,
+            f'/{ns}/fire_arrived',
+            lambda msg, ns=ns: self.arrived_callback(msg, ns),
+            10
             )
         self.get_logger().info(f'Subscribed to {topic}')
 
@@ -154,6 +171,12 @@ class HandleFire(Node):
                 self._on_delete_response(nm, f, att)
         )
 
+    def goal_cell_callback(self, msg: Int32MultiArray, ns: str):
+        # store the target cell for that robot
+        if len(msg.data) >= 2:
+            self.robot_goal_cells[ns] = (int(msg.data[0]), int(msg.data[1]))
+
+
     def _on_delete_response(self, name, future, attempt):
         try:
             resp = future.result()
@@ -211,6 +234,7 @@ class HandleFire(Node):
 
     # ─── Odometry → cell mapping ─────────────────────────────────────────
     def odometry_callback(self, msg: Odometry, ns: str):
+        # 1) Compute which grid‐cell we're in now
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
@@ -219,30 +243,33 @@ class HandleFire(Node):
         row = max(0, min(self.grid_rows-1, row))
         col = max(0, min(self.grid_cols-1, col))
 
+        # 2) Save pose & cell
         self.last_poses[ns] = (x, y, row, col)
-        cell = self.forest_info.get((row,col))
-        if cell and       cell.get("cstate",0) > 0 \
-            and  cell.get("state",  0) < 6:
-            cx = self.offset_x + col*self.cell_size
-            cy = self.offset_y + (self.grid_rows-1-row)*self.cell_size
-            dist = math.hypot(x - cx, y - cy)
-            tol = self.cell_size * 0.1
-            if dist <= tol:
-                key = (row, col)
-                now = time.time()
-                if key not in self.paused_cells:
-                    # first robot arrives
-                    self.paused_cells[key] = {
-                        'start_time': now,
-                        'robots':     {ns}
-                    }
-                else:
-                    # add this robot once
-                    self.paused_cells[key]['robots'].add(ns)
+        self.robot_cells[ns] = (row, col)
 
-                st    = self.paused_cells[key]['start_time']
-                count = len(self.paused_cells[key]['robots'])
+        # 3) If you want to *cancel* an in‐progress extinguish because the robot
+        #    wandered away before the timer finished, you can do:
+ 
+    def arrived_callback(self, msg: Int32MultiArray, ns: str):
+        # robot ns is now at its goal cell; start the extinguish timer immediately
+        row, col = int(msg.data[0]), int(msg.data[1])
+        key = (row, col)
+        cell = self.forest_info.get(key)
+        if not cell:
+            return
 
+        # only if still burning
+        if 0 < cell.get('cstate',0) < cell.get('max_fire',1)*200*5 and cell.get('state',0) < 6:
+            now = time.time()
+            entry = self.paused_cells.setdefault(key, {
+                'start_time': now,
+                'robots': set()
+            })
+            # if this robot wasn't already counted, reset its timer
+            if ns not in entry['robots']:
+                entry['start_time'] = now
+                self.get_logger().info(f"[{ns}] arrived at {key}, starting extinguish timer @ {now:.1f}")
+            entry['robots'].add(ns)
 
 
     # ─── Timed Utilities ──────────────────────────────────────────────────
@@ -278,7 +305,7 @@ class HandleFire(Node):
                 info      = self.paused_cells[key]
                 start     = info['start_time']
                 count     = len(info['robots'])
-                base_time = 30.0
+                base_time = 10.0
                 # diminishing‐returns: divide by sqrt(count)
                 threshold = base_time / math.sqrt(max(count,1))
 
@@ -299,24 +326,24 @@ class HandleFire(Node):
                 continue
 
             # fully burnt?
-            if cstate >= c_max*3 and state != 7:
+            if cstate >= c_max*5 and state != 7:
                 self.get_logger().info(f"Cell {key} burnt → state 7")
                 self.update_cell(key, force_state=7)
                 continue
 
             # regular progression
-            if 0 < cstate < c_max*3:
+            if 0 < cstate < c_max*5:
                 interval = c_max / 5.0
 
                 if cstate < c_max:
                     # state 1–4: increase by 3×(current bucket index+1)
                     idx = int((cstate - 1) // interval)
-                    inc = (idx + 1) * 3
+                    inc = (idx + 1) * 5
                 else:
                     # state 5: always +15
-                    inc = 15
+                    inc = 25
 
-                new_c = min(cstate + inc, int(c_max * 3))
+                new_c = min(cstate + inc, int(c_max * 5))
                 cell["cstate"] = new_c
                 self.get_logger().info(f"Cell {key} cstate → {new_c}")
 

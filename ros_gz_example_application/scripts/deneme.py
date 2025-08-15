@@ -9,6 +9,8 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from std_msgs.msg import Float32MultiArray, String
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32
+from std_msgs.msg import Int32MultiArray
 # --- IMPORT FWI FUNCTIONS FROM NEW MODULE ===
 from fire_weather_index import (
     calculate_ffmc,
@@ -46,13 +48,21 @@ class FireCellGoalClient(Node):
         # ─── Robot list & per-robot state ─────────────────────────────────
         self.robot_list = self.declare_parameter(
             'robot_list',
-            ['diff_drive']
+            ['diff_drive', 'diff_drive2']
         ).value
         
         self.poses      = {ns: (0.0, 0.0) for ns in self.robot_list}
         self.ready      = {ns: True        for ns in self.robot_list}
-        self.blacklists = {ns: set()       for ns in self.robot_list}
-        self.pending_extinguish = {}
+        self.score_pubs = {}
+        self.goal_cell_pubs = {}
+        self.arrived_pubs = {}
+        self._last_fb_log = { ns: 0.0 for ns in self.robot_list }
+        self.current_goal_cell = {ns: None for ns in self.robot_list}
+        self.start_poses      = {ns: None  for ns in self.robot_list}
+        self.returning_home   = {ns: False for ns in self.robot_list}
+
+        # ─── MASK-OUT CHANGES: track which cells are assigned ────────────
+        self.assigned_cells = set()
 
         # per-robot ActionClients & subscriptions
         self.action_clients = {}
@@ -64,12 +74,17 @@ class FireCellGoalClient(Node):
                 lambda msg, ns=ns: self.odom_callback(msg, ns),
                 10
             )
-            # done-extinguish
-            self.create_subscription(
-                String,
-                f'/{ns}/fire_cell_done',
-                lambda msg, ns=ns: self.done_callback(msg, ns),
-                10
+            self.arrived_pubs[ns] = self.create_publisher(
+            Int32MultiArray,
+            f'/{ns}/fire_arrived',
+            10
+            )
+            topic = f'/{ns}/no_distance_score'
+            self.score_pubs[ns] = self.create_publisher(
+            Float32, topic, 10
+            )
+            self.goal_cell_pubs[ns] = self.create_publisher(
+            Int32MultiArray, f'/{ns}/goal_cell', 10
             )
             # Action client instead of topic publisher
             client = ActionClient(self,
@@ -121,14 +136,6 @@ class FireCellGoalClient(Node):
         xg, yg = np.meshgrid(xs, ys)
         self.x_grid = xg - self.platform_width/2.0
         self.y_grid = self.platform_height/2.0 - yg
-
-        offset_mag = min(cell_w, cell_h) * 0.04
-        self.goal_offsets = {}
-        for idx, ns in enumerate(self.robot_list):
-            angle = 2 * 3.14 * idx / len(self.robot_list)
-            dx = offset_mag * math.cos(angle)
-            dy = offset_mag * math.sin(angle)
-            self.goal_offsets[ns] = (dx, dy)
         
         # Extra cell parameters (randomized for each cell // max and min values manually set):
         #  - wind_speed in ft/min (0.0 to 9842.52) according to Brauford scale.
@@ -197,43 +204,40 @@ class FireCellGoalClient(Node):
 
     # ─── Odometry callback ─────────────────────────────────────────────
     def odom_callback(self, msg, ns):
-        self.poses[ns] = (
-            msg.pose.pose.position.x,
-            msg.pose.pose.position.y
-        )
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        self.poses[ns] = (x, y)
+        # record start pose exactly once
+        if self.start_poses[ns] is None:
+            self.start_poses[ns] = (x, y)
 
     # ─── Grid callbacks ───────────────────────────────────────────────
     def fire_count_callback(self, msg):
         self.grid_data = msg.data
-        # wait until we have *all* six data sets before planning
-        if None in (
-            self.grid_data,
-            self.fuel_load_data,
-            self.vegetation_data,
-            self.elevation_data,
-            self.slope_data,
-            self.aspect_data
-        ):
+        if not self._all_maps_ready():
             return
 
-
-        # first, check for any robot that is “pending extinguish”:
-        for ns, (r, c) in list(self.pending_extinguish.items()):
-            idx = r * self.grid_cols + c
-            # fire_count publishes 0.0 for state 6 or 7
-            if self.grid_data[idx] == 0.0:
-                # now truly extinguished → free & dispatch
-                self.ready[ns] = True
-                del self.pending_extinguish[ns]
-                self.get_logger().info(f"[{ns}] confirmed extinguished in grid → new goal")
-                self.process_grid_and_send_goal(ns)
-
-        # then any other totally-free robot (initial startup, etc)
         for ns in self.robot_list:
-            if self.ready[ns] and ns not in self.pending_extinguish:
-                self.get_logger().info(f"4")
+            cell = self.current_goal_cell[ns]
+
+            # Case A: brand-new or just freed
+            if self.ready[ns]:
+                self.ready[ns] = False
                 self.process_grid_and_send_goal(ns)
-                
+                continue
+
+            # Case B: busy, check if that target cell just extinguished
+            if cell is not None:
+                idx = cell[0] * self.grid_cols + cell[1]
+                if self.grid_data[idx] == 0.0:
+                    self.get_logger().info(f"[{ns}] target {cell} is out → freeing robot")
+                    # ─── MASK-OUT CHANGES: release the cell ───────────
+                    if cell in self.assigned_cells:
+                        self.assigned_cells.remove(cell)
+                    self.current_goal_cell[ns] = None
+                    # free and replan immediately
+                    self.process_grid_and_send_goal(ns)
+
     def fuel_load_callback(self, msg):
         self.fuel_load_data = msg.data
 
@@ -250,8 +254,19 @@ class FireCellGoalClient(Node):
     def slope_callback(self, msg):
         self.slope_data = msg.data
 
+    def _all_maps_ready(self):
+        return None not in (
+            self.grid_data,
+            self.fuel_load_data,
+            self.vegetation_data,
+            self.elevation_data,
+            self.slope_data,
+            self.aspect_data,
+        )   
+
     def aspect_callback(self, msg):
         self.aspect_data = msg.data
+            
 
     # ─── Compute & send one goal for robot `ns` ────────────────────────
     def process_grid_and_send_goal(self, ns):
@@ -309,15 +324,38 @@ class FireCellGoalClient(Node):
         R_arr     = rate_of_spread(I_R, xi, rho_b, eps, Q_ig, phi_w, phi_s)
 
         mask = fire_counts > 0
-        for (r,c) in self.blacklists[ns]:
-            mask[r,c] = False
+
+        # ─── MASK-OUT CHANGES: ensure no double-assignment ─────────────
+        for (r, c) in list(self.assigned_cells):
+            mask[r, c] = False
+
         if not mask.any():
-            self.get_logger().info(f"[{ns}] No active fire cells.")
+            # no active fires → go home (once)
+            home = self.start_poses.get(ns)
+            if home is None:
+                self.get_logger().warn(f"[{ns}] start pose unknown, cannot return home")
+                return
+
+            if not self.returning_home[ns]:
+                hx, hy = home
+                self.get_logger().info(f"[{ns}] no active fires – returning to start at ({hx:.2f}, {hy:.2f})")
+                # clear any pending cell so we don't think it's still fighting fire
+                self.current_goal_cell[ns] = None
+                # build and send the home goal
+                goal_msg = GoToGoal.Goal(x= hx, y= hy)
+                send_goal_future = self.action_clients[ns].send_goal_async(
+                    goal_msg,
+                    feedback_callback=lambda fb, ns=ns: self._fb(ns, fb)
+                )
+                send_goal_future.add_done_callback(
+                    lambda fut, ns=ns: self._on_return_response(fut, ns)
+                )
+                self.returning_home[ns] = True
             return
 
         rx, ry    = self.poses[ns]
         distances = np.hypot(self.x_grid - rx, self.y_grid - ry)
-        fire_intensity = (self.H_arr * 2.326) * fuel_load * R_arr * fire_counts
+        fire_intensity = (self.H_arr * 2.326) * fuel_load * (R_arr * 0.00508) * fire_counts # Btu/lb to kj/kg and ft/min to m/s
 
         # wind-fuel sum (same as before)…
         wind_fuel_sum = np.zeros_like(fuel_load)
@@ -358,6 +396,7 @@ class FireCellGoalClient(Node):
         normalized_wind_speed     = self.wind_speed_val / (self.wind_speed_max + eps)
         normalized_vpd            = vpd_val / (vpd_val + eps)
 
+    
         # --- Vegetation factors & flammability ---
         veg_factors  = np.vectorize(lambda v: self.vegetation_factors.get(v, 1.0))(vegetation_array)
         flammability = np.minimum(
@@ -400,13 +439,16 @@ class FireCellGoalClient(Node):
         sc = np.where(mask, score, -np.inf)
         best = int(np.argmax(sc))
         br, bc = np.unravel_index(best, sc.shape)
+        self.current_goal_cell[ns] = (br, bc)
 
-        base_x = float(self.x_grid[br, bc])
-        base_y = float(self.y_grid[br, bc])
-        dx, dy = self.goal_offsets.get(ns, (0.0, 0.0))
+        # ─── MASK-OUT CHANGES: mark this cell assigned ─────────────────
+        self.assigned_cells.add((br, bc))
 
-        goal_x = base_x + dx
-        goal_y = base_y + dy
+        msg = Int32MultiArray(data=[int(br), int(bc)])
+        self.goal_cell_pubs[ns].publish(msg)
+
+        goal_x = float(self.x_grid[br, bc])
+        goal_y = float(self.y_grid[br, bc])
 
         self.get_logger().info(f"[{ns}] Sending goal → x: {goal_x:.2f}, y: {goal_y:.2f}")
 
@@ -433,13 +475,46 @@ class FireCellGoalClient(Node):
             'fwi':                float(fwi),
         }
 
+        base_no_dist = (
+            self.weight_flammability   * flammability              
+            + final_ws_weight            * normalized_wind_speed     
+            + self.weight_vpd            * normalized_vpd            
+            + self.weight_fire_intensity * normalized_fire_intensity 
+            + self.weight_wind_fuel      * normalized_wind_fuel_sum 
+            + self.weight_elevation      * norm_elev_risk            
+            + self.weight_aspect         * norm_aspect_risk
+        )
+        no_dist_score = (
+            base_no_dist * (rainfall_factor * temperature_factor)
+            + self.weight_fwi * (fwi / 100.0)
+        )
+
         if new_goal != self.prev_best_center[ns]:
+            # 1) log as before
             self.log_scoring_parameters(ns, [best_cell], rainfall_factor, temperature_factor)
+
+            # 2) get namespace index and adjust the score
+            ns_idx = self.robot_list.index(ns)
+            raw_score = no_dist_score[br, bc]
+            adjusted_score = raw_score + (ns_idx/100.0)
+
+            # 3) publish the adjusted no-distance score **only once**
+            msg = Float32()
+            msg.data = float(adjusted_score)
+            self.get_logger().info(
+                f"[{ns}] raw no-dist score: {raw_score:.3f}, "
+                f"ns index: {ns_idx}, "
+                f"adjusted score: {msg.data:.3f}"
+            )
+            self.score_pubs[ns].publish(msg)
+
+            # 4) remember this goal so it won’t republish until it really changes
             self.prev_best_center[ns] = new_goal
 
         # send goal via ActionClient
         self.ready[ns] = False
         goal_msg = GoToGoal.Goal(x=goal_x, y=goal_y)
+        self._last_fb_log[ns] = 0.0
         send_goal_future = self.action_clients[ns].send_goal_async(
             goal_msg,
             feedback_callback=lambda fb, ns=ns: self._fb(ns, fb))
@@ -448,49 +523,62 @@ class FireCellGoalClient(Node):
 
     # ─── Feedback handler ─────────────────────────────────────────────
     def _fb(self, ns, feedback_msg):
+        now = time.time()
+        if now - self._last_fb_log[ns] < 1.0:
+            return
         d = feedback_msg.feedback.distance
-        self.get_logger().info(f"[{ns}] moving, {d:.2f}m to go")
+        self._last_fb_log[ns] = now
 
     # ─── Result handler ───────────────────────────────────────────────
     def _on_result(self, ns, future):
         res = future.result().result
+        cell = self.current_goal_cell[ns]
         if res.goal_reached:
-            self.get_logger().info(f"[{ns}] arrived at fire cell")
+            self.get_logger().info(f"[{ns}] arrived at fire cell {cell}")
+            # let HandleFire know
+            msg = Int32MultiArray(data=[cell[0], cell[1]])
+            self.arrived_pubs[ns].publish(msg)
         else:
-            self.get_logger().warn(f"[{ns}] failed to reach goal")
-        # still wait for /fire_cell_done to mark ready again
+            self.get_logger().warn(f"[{ns}] failed to reach goal {cell}")
+            # ─── MASK-OUT CHANGES: release on failure ────────────
+            if cell in self.assigned_cells:
+                self.assigned_cells.remove(cell)
+            self.ready[ns] = True
 
     def _on_goal_response(self, future, ns):
-        # future.result() is your ClientGoalHandle
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().warn(f"[{ns}] Goal was rejected by the server")
-            # re-allow planning if you want:
+            # ─── MASK-OUT CHANGES: release on rejection ─────────
+            cell = self.current_goal_cell[ns]
+            if cell in self.assigned_cells:
+                self.assigned_cells.remove(cell)
             self.ready[ns] = True
             return
-
-        # now request the real result
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(
             lambda fut, ns=ns: self._on_result(ns, fut))
-    
 
-    # ─── Done (extinguish) callback ───────────────────────────────────
-    def done_callback(self, msg, ns):
-        try:
-            x_str, y_str = msg.data.split(',')
-            x, y = float(x_str), float(y_str)
-        except:
+    def _on_return_response(self, future, ns):
+        goal_handle = future.result()
+        if not goal_handle.accepted:
+            self.get_logger().warn(f"[{ns}] return-home goal was rejected")
+            self.returning_home[ns] = False
             return
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(
+            lambda fut, ns=ns: self._on_return_result(ns, fut)
+        )
 
-        # find nearest cell
-        d2 = (self.x_grid - x)**2 + (self.y_grid - y)**2
-        idx = int(np.argmin(d2))
-        r, c = np.unravel_index(idx, d2.shape)
-
-        self.blacklists[ns].add((r,c))
-        self.get_logger().info(f"[{ns}] Extinguish done → blacklisted {(r,c)}")
-        self.pending_extinguish[ns] = (r, c)
+    def _on_return_result(self, ns, future):
+        res = future.result().result
+        if res.goal_reached:
+            self.get_logger().info(f"[{ns}] successfully returned to start")
+        else:
+            self.get_logger().warn(f"[{ns}] failed to reach start position")
+        # allow future fires or another return-home
+        self.returning_home[ns] = False
+        self.ready[ns] = True
 
     # ─── Helpers ─────────────────────────────────────────────────────
     def get_wind_vector(self, wdir):
@@ -513,7 +601,7 @@ class FireCellGoalClient(Node):
                 for r in range(self.grid_rows):
                     for c in range(self.grid_cols):
                         f.write(f"Cell({r},{c}): RH={self.rh_val:.2f}%, "
-                                f"WS={self.wind_speed_val:.2f}m/s, "
+                                f"WS={self.wind_speed_val:.2f}ft/min, "
                                 f"H={self.H_arr[r,c]:.2f}btu/lb\n")
             self.get_logger().info("Initial cell parameters logged.")
         except Exception as e:
@@ -527,7 +615,7 @@ class FireCellGoalClient(Node):
             with open(filename, "a") as f:
                 f.write(f"[{ns}] Scoring Parameters for Candidate Cell at {cell['center']}:\n")
                 f.write(f"  Fire Intensity: {cell['fire_intensity']:.2f}\n")
-                f.write(f"  Heat Yield (H): {cell['H']:.2f} kJ/kg\n")
+                f.write(f"  Heat Yield (H): {cell['H']:.2f} Btu/lb\n")
                 f.write(f"  Fuel Load (w): {cell['w']:.2f} kg/m²\n")
                 f.write(f"  fire_count (r): {cell['r']:.2f}\n")
                 f.write(f"  Distance: {cell['distance']:.2f} m\n")
@@ -535,7 +623,7 @@ class FireCellGoalClient(Node):
                 f.write(f"  Vegetation: {cell['vegetation']}\n")
                 f.write(f"  Veg Factor: {self.vegetation_factors.get(cell['vegetation'], 1.0):.2f}\n")
                 f.write(f"  Flammability: {cell['flammability']:.2f}\n")
-                f.write(f"  Wind Speed: {cell['wind_speed']:.2f} m/s\n")
+                f.write(f"  Wind Speed: {cell['wind_speed']:.2f} ft/min\n")
                 f.write(f"  Wind Fuel Sum: {cell.get('wind_fuel_sum', 0):.2f} kg/m²\n")
                 f.write(f"  VPD: {cell['vpd']:.3f} kPa\n")
                 f.write(f"  Elevation Risk: {cell['elevation_risk']:.2f}\n")

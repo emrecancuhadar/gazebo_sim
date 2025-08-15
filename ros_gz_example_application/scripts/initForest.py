@@ -22,16 +22,16 @@ class InitForest(Node):
 
         
         # Script paths
-        self.intensity_script = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
-        self.season_script    = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
+        self.intensity_script = "/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/greenIntensity.py"
+        self.season_script    = "/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_application/scripts/fourseasons.py"
         self.share_dir        = get_package_share_directory('ros_gz_example_description')
 
         # Data paths
-        self.summer_red = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_red.tiff'
-        self.summer_nir = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_nir.tiff'
-        self.winter_red = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_red.tiff'
-        self.winter_nir = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_nir.tiff'
-        self.winter_img = '/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/14ocak2024normalview.jpg'
+        self.summer_red = '/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_red.tiff'
+        self.summer_nir = '/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/summer_nir.tiff'
+        self.winter_red = '/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_red.tiff'
+        self.winter_nir = '/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/winter_nir.tiff'
+        self.winter_img = '/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/14ocak2024normalview.jpg'
 
         # Publisher
         self.forest_info = {}
@@ -76,7 +76,8 @@ class InitForest(Node):
 
         # 4) DATA‐DRIVEN SPAWNS
         centers = [
-            (9, 9, 1)
+            (1, 1, 1),
+            (1, 7, 1)
         ]
         spawn_map = {}
         n_states = 5

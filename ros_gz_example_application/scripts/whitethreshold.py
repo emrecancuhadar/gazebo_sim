@@ -2,7 +2,7 @@
 import time
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import Image
 from std_msgs.msg import Float32MultiArray, MultiArrayLayout, MultiArrayDimension
 from cv_bridge import CvBridge
 import cv2
@@ -46,7 +46,6 @@ def is_circular(cnt, thr=CIRCULARITY_THRESHOLD):
     circ = 4.0 * np.pi * area / (peri * peri)
     return circ >= thr
 
-
 class WhiteGridNode(Node):
     def __init__(self):
         super().__init__('white_grid_node')
@@ -73,17 +72,16 @@ class WhiteGridNode(Node):
             -4.94754539,
              7.71077147
         ], dtype=np.float64)
-        # will hold remap once we know image size:
         self._map1 = None
         self._map2 = None
 
         # ---- ROS I/O ----------------------------------------------------
         self.subscription = self.create_subscription(
-            CompressedImage, '/image/compressed', self.image_callback, 10)
+            Image, '/image', self.image_callback, 10)
         self.grid_pub     = self.create_publisher(
             Float32MultiArray, '/grid/detected_balls', 10)
         self.get_logger().info(
-            'Subscribed to /image/compressed; publishing /grid/fire_count')
+            'Subscribed to /image; publishing /grid/detected_balls')
 
         # ---- GUI --------------------------------------------------------
         cv2.startWindowThread()
@@ -92,19 +90,30 @@ class WhiteGridNode(Node):
 
     def image_callback(self, msg):
         # Acquire raw frame
-        frame = self.bridge.compressed_imgmsg_to_cv2(msg, 'bgr8')
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         if frame.ndim == 2 or (frame.ndim == 3 and frame.shape[2] == 1):
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
         # ---- undistort fisheye ----------------------------------------
-        h, w = frame.shape[:2]
+        h_raw, w_raw = frame.shape[:2]
         if self._map1 is None:
-            # initialize undistort map once per resolution
             self._map1, self._map2 = cv2.fisheye.initUndistortRectifyMap(
-                self.K, self.D, np.eye(3), self.K, (w, h), cv2.CV_16SC2)
-        frame = cv2.remap(frame, self._map1, self._map2,
-                          interpolation=cv2.INTER_LINEAR,
-                          borderMode=cv2.BORDER_CONSTANT)
+                self.K, self.D, np.eye(3), self.K, (w_raw, h_raw), cv2.CV_16SC2)
+        frame_undist = cv2.remap(frame, self._map1, self._map2,
+                                interpolation=cv2.INTER_LINEAR,
+                                borderMode=cv2.BORDER_CONSTANT)
+
+        # ---- pad to square ---------------------------------------------
+        h, w = frame_undist.shape[:2]
+        m    = max(h, w)
+        top    = (m - h) // 2
+        bottom = m - h - top
+        left   = (m - w) // 2
+        right  = m - w - left
+        frame = cv2.copyMakeBorder(frame_undist,
+                                   top, bottom, left, right,
+                                   cv2.BORDER_CONSTANT, value=[0,0,0])
+        h, w = frame.shape[:2]  # now h == w == m
 
         # ---- detection stages ------------------------------------------
         blurred, sure_bg, sure_fg, segmented = self.detector.detect(frame)
@@ -112,42 +121,33 @@ class WhiteGridNode(Node):
         # ---- contour filtering & circular mask -------------------------
         contours, _ = cv2.findContours(
             sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
         frame_draw = frame.copy()
         circ_mask  = np.zeros_like(segmented)
         valid      = []
-
         for cnt in contours:
             if cv2.contourArea(cnt) < self.detector.min_area:
                 continue
             if not is_circular(cnt):
                 continue
-
             valid.append(cnt)
             cv2.drawContours(frame_draw, [cnt], -1, (0, 255, 0), 1)
             cv2.drawContours(circ_mask,   [cnt], -1, 255, cv2.FILLED)
 
         # ---- grid math -------------------------------------------------
-        step_y     = h // self.grid_rows
-        step_x     = w // self.grid_cols
-        # build per-cell masks
+        step = h // self.grid_rows
         cell_masks = []
         for r in range(self.grid_rows):
             for c in range(self.grid_cols):
-                m = np.zeros((h, w), dtype=np.uint8)
-                y0, y1 = r * step_y, (r + 1) * step_y
-                x0, x1 = c * step_x, (c + 1) * step_x
-                m[y0:y1, x0:x1] = 255
-                cell_masks.append(m)
-
+                msk = np.zeros((h, h), dtype=np.uint8)
+                y0, y1 = r * step, (r + 1) * step
+                x0, x1 = c * step, (c + 1) * step
+                msk[y0:y1, x0:x1] = 255
+                cell_masks.append(msk)
         cell_areas = np.zeros((self.grid_rows, self.grid_cols), dtype=float)
         for cnt in valid:
-            fill = np.zeros((h, w), dtype=np.uint8)
+            fill = np.zeros((h, h), dtype=np.uint8)
             cv2.drawContours(fill, [cnt], -1, 255, cv2.FILLED)
-            overlaps = [
-                cv2.countNonZero(cv2.bitwise_and(fill, cm))
-                for cm in cell_masks
-            ]
+            overlaps = [cv2.countNonZero(cv2.bitwise_and(fill, msk)) for msk in cell_masks]
             r, c = divmod(int(np.argmax(overlaps)), self.grid_cols)
             cell_areas[r, c] += self.ball_weight
 
@@ -167,30 +167,22 @@ class WhiteGridNode(Node):
         grid_msg.data = mean_frac.astype(np.float32).flatten().tolist()
         self.grid_pub.publish(grid_msg)
 
-        # ---- visualization: circular mask + grid -----------------------
-        kernel     = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        circ_mask  = cv2.dilate(circ_mask, kernel, iterations=2)
-        circ_vis   = cv2.cvtColor(circ_mask, cv2.COLOR_GRAY2BGR)
-
+        # ---- visualization ---------------------------------------------
+        kernel    = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        circ_mask = cv2.dilate(circ_mask, kernel, iterations=2)
+        circ_vis  = cv2.cvtColor(circ_mask, cv2.COLOR_GRAY2BGR)
         for i in range(1, self.grid_rows):
-            y = i * step_y
+            y = i * step
             cv2.line(circ_vis, (0, y), (w, y), (100,100,100), 1)
         for j in range(1, self.grid_cols):
-            x = j * step_x
+            x = j * step
             cv2.line(circ_vis, (x, 0), (x, h), (100,100,100), 1)
-
         for r in range(self.grid_rows):
             for c in range(self.grid_cols):
-                val = mean_frac[r, c] * 10.0
-                cv2.putText(
-                    circ_vis,
-                    f'{val:.1f}',
-                    (c * step_x + step_x//4, r * step_y + step_y//2),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.4,
-                    (0,255,255),
-                    1
-                )
+                val = mean_frac[r, c] * 5.0
+                cv2.putText(circ_vis, f'{val:.1f}',
+                            (c * step + step//4, r * step + step//2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0,255,255), 1)
 
         combined = np.hstack([frame_draw, circ_vis])
         stages   = np.hstack([

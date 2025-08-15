@@ -71,7 +71,7 @@ if __name__ == '__main__':
         cls_Grid = grid_majority_classification(cls_full)
 
         # DEM -> slope & aspect
-        dem_path = "/home/emrecan/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/bizimalandem3.tif"  # or explicit DEM path
+        dem_path = "/home/cagan-ozsir/two_wheel_ws/src/gazebo_sim/ros_gz_example_description/models/my_ground_plane/materials/textures/bizimalandem3.tif"  # or explicit DEM path
         with rasterio.open(dem_path) as src:
             dem = src.read(1).astype('float32')
             tr = src.transform
